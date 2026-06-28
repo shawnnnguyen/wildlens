@@ -1,0 +1,308 @@
+[
+  {
+    "common_name": "African Lion",
+    "scientific_name": "Panthera leo",
+    "threat_level": "high",
+    "safety_notes": "Stay inside the vehicle at all times. Maintain at least 100 m distance. Avoid direct eye contact — it is interpreted as a challenge. Never make sudden movements or loud sounds. Alert your ranger immediately if the animal approaches."
+  },
+  {
+    "common_name": "African Elephant",
+    "scientific_name": "Loxodonta africana",
+    "threat_level": "medium",
+    "safety_notes": "Keep 50–100 m distance. Never block a herd's path or approach a mother with a calf. Mock charge: spread ears and raised trunk — back away slowly. Real charge: pinned ears and lowered head — drive away immediately."
+  },
+  {
+    "common_name": "African Leopard",
+    "scientific_name": "Panthera pardus",
+    "threat_level": "high",
+    "safety_notes": "Extreme ambush predator — extremely dangerous if cornered. Maintain at least 50 m. Avoid approaching trees where kills are cached. Never attempt to approach a feeding leopard. Stay in vehicle."
+  },
+  {
+    "common_name": "White Rhinoceros",
+    "scientific_name": "Ceratotherium simum",
+    "threat_level": "medium",
+    "safety_notes": "Poor eyesight but acute hearing and smell. Maintain 30–50 m. Move slowly and stay downwind. If it charges, move behind a tree or vehicle. Despite size it can reach 50 km/h."
+  },
+  {
+    "common_name": "Black Rhinoceros",
+    "scientific_name": "Diceros bicornis",
+    "threat_level": "high",
+    "safety_notes": "More aggressive than white rhino. Maintain at least 50 m. Extremely territorial and will charge without warning. Stay in vehicle. Move downwind if on foot — smell is its primary sense."
+  },
+  {
+    "common_name": "African Buffalo",
+    "scientific_name": "Syncerus caffer",
+    "threat_level": "high",
+    "safety_notes": "Considered one of the most dangerous animals in Africa. Unpredictable and known to ambush and circle back on pursuers. Maintain 50 m minimum. Never approach a solitary old bull — they are the most aggressive."
+  },
+  {
+    "common_name": "Hippopotamus",
+    "scientific_name": "Hippopotamus amphibius",
+    "threat_level": "high",
+    "safety_notes": "EXTREME DANGER. Causes more human fatalities in Africa than any other large wild animal. Never stand between a hippo and water — it will charge at 30 km/h. Maintain 100 m on land, 200 m on water. Never boat near a pod at night."
+  },
+  {
+    "common_name": "Nile Crocodile",
+    "scientific_name": "Crocodylus niloticus",
+    "threat_level": "high",
+    "safety_notes": "EXTREME DANGER near any water. Launches from below waterline with explosive speed. Never approach riverbanks, lake edges, or waterholes in crocodile habitat. Stay at least 5 m from water's edge. Most attacks occur at dawn and dusk."
+  },
+  {
+    "common_name": "Cheetah",
+    "scientific_name": "Acinonyx jubatus",
+    "threat_level": "medium",
+    "safety_notes": "Lowest big-cat threat level — rarely aggressive toward humans. Maintain 30 m. Do not exit vehicle near a cheetah with cubs. Never disrupt a hunt or a feeding animal — stress causes them to lose their meal."
+  },
+  {
+    "common_name": "Plains Zebra",
+    "scientific_name": "Equus quagga",
+    "threat_level": "low",
+    "safety_notes": "Generally safe to observe. Zebras bite and kick powerfully when startled or cornered. Maintain 20–30 m. Never approach from behind. Do not separate a zebra from its herd."
+  },
+  {
+    "common_name": "Reticulated Giraffe",
+    "scientific_name": "Giraffa reticulata",
+    "threat_level": "low",
+    "safety_notes": "Generally non-aggressive. A single kick can be lethal. Maintain 30 m. Give wide berth when driving under or past — vehicles can startle them into kicking."
+  },
+  {
+    "common_name": "Masai Giraffe",
+    "scientific_name": "Giraffa tippelskirchi",
+    "threat_level": "low",
+    "safety_notes": "Generally non-aggressive. Maintain 30 m. A kick from a giraffe can kill a lion — keep distance from legs and do not approach from behind."
+  },
+  {
+    "common_name": "African Wild Dog",
+    "scientific_name": "Lycaon pictus",
+    "threat_level": "low",
+    "safety_notes": "Rarely aggressive toward humans. Maintain 30 m. Never disrupt a hunt or approach pups at a den — pack may mob perceived threats. If encountered on foot, stand still and avoid running."
+  },
+  {
+    "common_name": "Spotted Hyena",
+    "scientific_name": "Crocuta crocuta",
+    "threat_level": "medium",
+    "safety_notes": "Dangerous in large packs especially at night. Known to approach campsites. Maintain 30 m. Do not feed or approach. Secure all food in camp. If on foot and approached by a pack, make noise and move toward other people."
+  },
+  {
+    "common_name": "Striped Hyena",
+    "scientific_name": "Hyaena hyaena",
+    "threat_level": "low",
+    "safety_notes": "Shy and rarely aggressive toward humans. Maintain 20 m. Primarily scavenger. Avoid surprising at close range."
+  },
+  {
+    "common_name": "Black-backed Jackal",
+    "scientific_name": "Canis mesomelas",
+    "threat_level": "low",
+    "safety_notes": "Generally not dangerous. May carry rabies — never approach or handle. Maintain 10 m. Do not leave food unattended in camp."
+  },
+  {
+    "common_name": "Warthog",
+    "scientific_name": "Phacochoerus africanus",
+    "threat_level": "low",
+    "safety_notes": "Usually non-aggressive. Will defend itself fiercely if cornered — sharp tusks cause serious wounds. Maintain 10 m. Give way on paths."
+  },
+  {
+    "common_name": "Common Wildebeest",
+    "scientific_name": "Connochaetes taurinus",
+    "threat_level": "low",
+    "safety_notes": "Safe to observe in large herds. Can be unpredictable during the Great Migration river crossings — do not stand near riverbanks at crossing points. Maintain 20 m."
+  },
+  {
+    "common_name": "Impala",
+    "scientific_name": "Aepyceros melampus",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive. Safe to observe at any distance. Indicator species — if impalas scatter suddenly, a predator is nearby."
+  },
+  {
+    "common_name": "Thomson's Gazelle",
+    "scientific_name": "Eudorcas thomsonii",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive. Safe to observe. Indicator species — panic flight signals nearby predator. Maintain 10 m to avoid flushing the herd."
+  },
+  {
+    "common_name": "Grant's Gazelle",
+    "scientific_name": "Nanger granti",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive. Safe to observe at any distance."
+  },
+  {
+    "common_name": "Topi",
+    "scientific_name": "Damaliscus lunatus",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive. Safe to observe. Often stands on termite mounds as a sentinel — good indicator of predator presence in the area."
+  },
+  {
+    "common_name": "Common Eland",
+    "scientific_name": "Tragelaphus oryx",
+    "threat_level": "low",
+    "safety_notes": "Largest antelope — despite size, generally docile. Maintain 20 m. Males have large spiralled horns and can be defensive during rutting season."
+  },
+  {
+    "common_name": "Greater Kudu",
+    "scientific_name": "Tragelaphus strepsiceros",
+    "threat_level": "low",
+    "safety_notes": "Shy and usually flees. Safe to observe at 20 m. Males have impressive spiralled horns — avoid surprising them in dense bush."
+  },
+  {
+    "common_name": "Bushbuck",
+    "scientific_name": "Tragelaphus scriptus",
+    "threat_level": "low",
+    "safety_notes": "Shy and solitary. Males have sharp horns and will defend themselves if cornered. Maintain 10 m. Commonly found near rivers and dense vegetation."
+  },
+  {
+    "common_name": "Waterbuck",
+    "scientific_name": "Kobus ellipsiprymnus",
+    "threat_level": "low",
+    "safety_notes": "Generally non-aggressive. Males have large curved horns. Maintain 15 m. Often found near rivers and waterholes."
+  },
+  {
+    "common_name": "African Wild Ass",
+    "scientific_name": "Equus africanus",
+    "threat_level": "low",
+    "safety_notes": "Critically endangered — treat sightings with extreme care. Maintain 50 m to avoid disturbing. Do not approach or attempt to feed."
+  },
+  {
+    "common_name": "Olive Baboon",
+    "scientific_name": "Papio anubis",
+    "threat_level": "medium",
+    "safety_notes": "Large males are dangerous — can cause serious bites. Never feed baboons; they become aggressive and lose fear of humans. Keep car windows closed near baboons. Maintain 10 m. Do not make eye contact with an alpha male."
+  },
+  {
+    "common_name": "Vervet Monkey",
+    "scientific_name": "Chlorocebus pygerythrus",
+    "threat_level": "low",
+    "safety_notes": "Rarely dangerous but will bite if fed or cornered. Do not feed. Keep food secured in camp. Maintain 5 m."
+  },
+  {
+    "common_name": "Puff Adder",
+    "scientific_name": "Bitis arietans",
+    "threat_level": "high",
+    "safety_notes": "Responsible for the most snakebite fatalities in Africa — slow-moving and well-camouflaged. Always watch where you step, especially on paths and near rocks. Never handle. If bitten, immobilise the limb and evacuate immediately."
+  },
+  {
+    "common_name": "Black Mamba",
+    "scientific_name": "Dendroaspis polylepis",
+    "threat_level": "high",
+    "safety_notes": "World's fastest land snake — up to 20 km/h. Highly venomous; untreated bite can be fatal within 20 minutes. Maintain distance. Never corner or approach. If encountered, retreat slowly. Antivenin is essential — ensure medical evacuation plan is in place."
+  },
+  {
+    "common_name": "Rock Monitor",
+    "scientific_name": "Varanus albigularis",
+    "threat_level": "low",
+    "safety_notes": "Non-venomous. Bites and claws if handled. Maintain 5 m. Observe from vehicle. Do not provoke."
+  },
+  {
+    "common_name": "Secretary Bird",
+    "scientific_name": "Sagittarius serpentarius",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive toward humans. Safe to observe on foot. Remarkable predator that stamps snakes to death. Keep 20 m to avoid flushing."
+  },
+  {
+    "common_name": "Ostrich",
+    "scientific_name": "Struthio camelus",
+    "threat_level": "medium",
+    "safety_notes": "Can be aggressive especially during nesting season. A kick from an ostrich can disembowel a human. Maintain 30 m. Do not approach a nesting pair. If threatened it will charge — move behind a vehicle or tree."
+  },
+  {
+    "common_name": "Martial Eagle",
+    "scientific_name": "Polemaetus bellicosus",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive toward humans. Africa's largest eagle. Safe to observe. Nesting pairs will dive-bomb intruders near the nest — maintain 50 m from any active nest."
+  },
+  {
+    "common_name": "Lilac-breasted Roller",
+    "scientific_name": "Coracias caudatus",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive. Safe to observe at any distance. One of Africa's most photogenic birds."
+  },
+  {
+    "common_name": "African Fish Eagle",
+    "scientific_name": "Haliaeetus vocifer",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive toward humans. Safe to observe. Iconic call is the sound of Africa."
+  },
+  {
+    "common_name": "Marabou Stork",
+    "scientific_name": "Leptoptilos crumeniferus",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive. Can be bold near campsites — secure food scraps. Large bill is powerful; maintain 5 m."
+  },
+  {
+    "common_name": "African Penguin",
+    "scientific_name": "Spheniscus demersus",
+    "threat_level": "low",
+    "safety_notes": "Bites if handled or approached too closely. Maintain 2 m on designated paths. Do not disturb nesting burrows."
+  },
+  {
+    "common_name": "Honey Badger",
+    "scientific_name": "Mellivora capensis",
+    "threat_level": "medium",
+    "safety_notes": "Pound-for-pound the most fearless animal in Africa. Will attack animals many times its size including lions. If encountered on foot, do not approach — move away calmly. Highly defensive and will bite."
+  },
+  {
+    "common_name": "African Civet",
+    "scientific_name": "Civettictis civetta",
+    "threat_level": "low",
+    "safety_notes": "Nocturnal and shy. Rarely seen. Non-aggressive. Observe from vehicle if spotted at night."
+  },
+  {
+    "common_name": "Serval",
+    "scientific_name": "Leptailurus serval",
+    "threat_level": "low",
+    "safety_notes": "Shy medium-sized cat. Non-aggressive toward humans. Maintain 20 m to avoid flushing."
+  },
+  {
+    "common_name": "Caracal",
+    "scientific_name": "Caracal caracal",
+    "threat_level": "low",
+    "safety_notes": "Elusive and rarely seen. Non-aggressive toward humans. Maintain 20 m."
+  },
+  {
+    "common_name": "African Wildcat",
+    "scientific_name": "Felis lybica",
+    "threat_level": "low",
+    "safety_notes": "Non-aggressive. Resembles a domestic tabby. Safe to observe. Ancestor of the domestic cat."
+  },
+  {
+    "common_name": "Pangolin",
+    "scientific_name": "Manis temminckii",
+    "threat_level": "low",
+    "safety_notes": "Critically endangered. Rolls into a ball when threatened. Non-aggressive. If encountered, observe only — do not touch or disturb. Report sightings to conservancy."
+  },
+  {
+    "common_name": "Aardvark",
+    "scientific_name": "Orycteropus afer",
+    "threat_level": "low",
+    "safety_notes": "Nocturnal and rarely seen. Non-aggressive. Powerful claws for digging — do not corner. Observe from distance if spotted on a night drive."
+  },
+  {
+    "common_name": "Umbrella Thorn Acacia",
+    "scientific_name": "Vachellia tortilis",
+    "threat_level": "low",
+    "safety_notes": "Thorns are extremely sharp and can puncture tyres and skin. Avoid driving over fallen branches. Do not lean on trunk — Crematogaster ants nest inside thorns and will swarm."
+  },
+  {
+    "common_name": "Baobab Tree",
+    "scientific_name": "Adansonia digitata",
+    "threat_level": "low",
+    "safety_notes": "No direct danger. Hollowed trunks can harbour wildlife including bees, pythons, and baboons. Check before approaching."
+  },
+  {
+    "common_name": "Candelabra Tree",
+    "scientific_name": "Euphorbia ingens",
+    "threat_level": "medium",
+    "safety_notes": "Highly toxic milky latex — contact with skin causes severe burns; eye contact can cause blindness. Never break or damage. Do not handle branches or sap. Keep children away."
+  },
+  {
+    "common_name": "Fever Tree",
+    "scientific_name": "Vachellia xanthophloea",
+    "threat_level": "low",
+    "safety_notes": "No direct danger. Often grows in malaria-prone areas near water. Take malaria prophylaxis when visiting fever tree forests."
+  },
+  {
+    "common_name": "African Rock Python",
+    "scientific_name": "Python sebae",
+    "threat_level": "high",
+    "safety_notes": "Africa's largest snake — up to 6 m. Non-venomous but kills by constriction. Capable of swallowing prey the size of an impala. Maintain 5 m. Never handle. Especially dangerous near water and in thick vegetation."
+  }
+]
