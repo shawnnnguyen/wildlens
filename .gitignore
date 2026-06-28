@@ -1,5 +1,6 @@
 # Environment
 .env
+.env.local
 
 # Python
 __pycache__/
@@ -11,10 +12,18 @@ build/
 .venv/
 venv/
 
-# Generated at runtime
-faiss_wildlife_index/
-audio_output/
-data/cache/
+# Generated at runtime (agent/)
+agent/faiss_wildlife_index/
+agent/audio_output/
+agent/data/cache/
+
+# Generated at runtime (backend/)
+backend/static/audio/
+
+# Node / Expo (frontend/)
+frontend/node_modules/
+frontend/.expo/
+frontend/dist/
 
 # IDE
 .idea/

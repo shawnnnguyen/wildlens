@@ -2,22 +2,65 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository layout
+
+```
+safari-guide/
+├── chat/                    # Python backend (LangGraph agent)
+│   ├── src/safari_guide/    # Main package
+│   │   ├── state.py         # SafariGuideState + WildlifeIdentification schema
+│   │   ├── graphs.py        # Graph builder + make_turn_input()
+│   │   ├── nodes.py         # All 7 LangGraph nodes
+│   │   ├── rag.py           # Hybrid BM25 + Pinecone retriever
+│   │   ├── tts.py           # TTS synthesis (edge-tts → gTTS → sentinel)
+│   │   ├── __main__.py      # Interactive CLI demo (run_chat)
+│   │   └── data/            # Data ingestion pipeline
+│   │       ├── ingest.py    # CLI entry point
+│   │       ├── fetcher.py   # EOL / Wikipedia / API Ninjas / IUCN clients
+│   │       ├── supabase_store.py  # Supabase read/write adapter
+│   │       ├── lila.py      # LILA BC camera-trap image downloader
+│   │       ├── ultralytics_dl.py  # Ultralytics African Wildlife dataset
+│   │       └── species_list.json  # 48 Serengeti species definitions
+│   ├── supabase/schema.sql  # SQL DDL for species / documents / image_files tables
+│   ├── tests/               # pytest suite (no API keys needed)
+│   └── requirements.txt
+└── frontend/                # Mobile app (Expo / React Native)
+```
+
 ## Setup
 
-Copy `.env.example` to `.env` and fill in both required keys:
+Copy `.env.example` to `.env` and fill in the required keys:
+
 ```
-GOOGLE_API_KEY=...       # Gemini 1.5 Flash (vision/multimodal)
-DEEPSEEK_API_KEY=...     # DeepSeek Chat (text generation via OpenAI-compatible API)
+# Required — core LLMs
+GOOGLE_API_KEY=...           # Gemini 1.5 Flash (vision/multimodal)
+DEEPSEEK_API_KEY=...         # DeepSeek Chat (text generation via OpenAI-compatible API)
+
+# Required — vector + document store
+PINECONE_API_KEY=...         # Pinecone cloud vector store
+PINECONE_INDEX_NAME=safari-guide
+SUPABASE_URL=...             # https://<project-ref>.supabase.co
+SUPABASE_KEY=...             # service role key (for ingestion) / anon key (read-only)
+
+# Optional — data ingestion sources
+IUCN_API_KEY=...             # IUCN Red List API (mock used if absent)
+API_NINJAS_KEY=...           # API Ninjas animal facts (skipped if absent)
+
+# Optional — observability
+LANGFUSE_PUBLIC_KEY=...
+LANGFUSE_SECRET_KEY=...
 ```
 
-Install dependencies:
+Install dependencies (run from `chat/`):
 ```
 pip install -r requirements.txt
 ```
 
 ## Commands
 
-Run the demo (5-turn conversational session):
+All commands run from the `chat/` directory.
+
+Run the interactive CLI demo:
 ```
 python -m safari_guide
 ```
@@ -31,6 +74,28 @@ Run a single test file:
 ```
 pytest tests/test_nodes.py
 pytest tests/test_rag.py
+```
+
+### Data ingestion (one-time setup)
+
+Before first use, populate Supabase and Pinecone:
+```
+# Text only: EOL + Wikipedia + API Ninjas + IUCN → Supabase + Pinecone
+python -m safari_guide.data.ingest --text
+
+# All image sources (EOL URLs + LILA BC + Ultralytics)
+python -m safari_guide.data.ingest --images
+
+# Everything
+python -m safari_guide.data.ingest --all
+
+# Dry run — show what would be done without writing
+python -m safari_guide.data.ingest --all --dry-run
+```
+
+Run Supabase schema once (in Supabase dashboard SQL editor or psql):
+```
+chat/supabase/schema.sql
 ```
 
 ## Architecture
@@ -91,11 +156,11 @@ app.invoke(
 
 ### RAG: hybrid retriever (`rag.py`)
 
-`init_rag()` returns an `EnsembleRetriever` combining:
-- **BM25** (`BM25Retriever`) — keyword matching; always rebuilt in-memory from the mock corpus
-- **FAISS** (`langchain-community`) — semantic similarity via `all-MiniLM-L6-v2` (CPU, 384-dim); persisted to `faiss_wildlife_index/` on first run, reloaded on subsequent runs
+`init_rag()` returns an `_EnsembleRetriever` (custom RRF implementation) combining:
+- **BM25** (`BM25Retriever`) — keyword matching; corpus rebuilt in-memory from Supabase `documents` table at startup; falls back to `_MOCK_DOCUMENTS` if Supabase is unreachable
+- **Pinecone** (`PineconeVectorStore`) — cloud vector store; 384-dim `all-MiniLM-L6-v2` embeddings; falls back to `_NullRetriever` if `PINECONE_API_KEY` is absent or init fails
 
-Fusion uses Reciprocal Rank Fusion (RRF) with equal weights (0.5/0.5), returning `k=3` docs per retriever before fusion. FAISS requires `allow_dangerous_deserialization=True` on `load_local`.
+Fusion uses Reciprocal Rank Fusion (RRF, `rrf_k=60`) with equal weights (0.5/0.5). If Pinecone is unavailable the retriever degrades gracefully to BM25-only.
 
 ### TTS (`tts.py`)
 
@@ -104,20 +169,24 @@ Fusion uses Reciprocal Rank Fusion (RRF) with equal weights (0.5/0.5), returning
 2. `gTTS` — simpler fallback
 3. Returns sentinel `"NO_TTS_ENGINE_INSTALLED"` if neither is available
 
-Audio files are UUID-named MP3s written to `audio_output/` (auto-created).
+Audio files are written to the OS temp directory (`tempfile.mkstemp`) with a `safari_` prefix.
+
+### Data layer (`data/`)
+
+- `species_list.json` — canonical list of 48 Serengeti species with `common_name`, `scientific_name`, `threat_level`, and handcrafted `safety_notes`
+- `fetcher.py` — HTTP clients for EOL (Encyclopedia of Life), Wikipedia, API Ninjas, and IUCN Red List
+- `supabase_store.py` — read/write adapter: upserts species/documents/images on ingest; loads all documents for BM25 rebuild at startup
+- `lila.py` — downloads LILA BC / Snapshot Serengeti camera-trap images to Supabase Storage
+- `ultralytics_dl.py` — downloads Ultralytics African Wildlife Dataset (buffalo, elephant, rhino, zebra) to Supabase Storage
+- `ingest.py` — CLI orchestrator; runs one-time population of Supabase + Pinecone from all text/image sources
 
 ### Long-range memory
 
 `node_summarize_history` fires when `len(chat_history) > SUMMARY_THRESHOLD` (default 10). It compresses all but the most recent 6 messages into `conversation_summary` using a rolling LLM call. The persona node injects this summary plus the last 6 messages and a one-line digest of all animals seen this session (`identification_history`) into the LLM context.
 
-### Auto-created directories
-
-- `faiss_wildlife_index/` — FAISS persistence (first run builds, subsequent runs reload)
-- `audio_output/` — generated MP3 files
-
 ### Production swap points
 
 - Checkpointer: `MemorySaver()` → `SqliteSaver.from_conn_string("safari.db")` (zero graph changes)
-- RAG corpus: replace `_MOCK_DOCUMENTS` in `rag.py` with real loaders (e.g. `PyMuPDFLoader`)
+- RAG corpus: replace `_MOCK_DOCUMENTS` in `rag.py` or populate Supabase via `ingest.py`
 - TTS engine: replace `synthesise_audio()` in `tts.py` (e.g. ElevenLabs) — zero node changes
 - Observability: set `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` in `.env` for Langfuse tracing
