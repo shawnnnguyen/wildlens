@@ -6,26 +6,27 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 safari-guide/
-├── chat/                    # Python backend (LangGraph agent)
-│   ├── src/safari_guide/    # Main package
-│   │   ├── state.py         # SafariGuideState + WildlifeIdentification schema
-│   │   ├── graphs.py        # Graph builder + make_turn_input()
-│   │   ├── nodes.py         # All 7 LangGraph nodes
-│   │   ├── rag.py           # Hybrid BM25 + Pinecone retriever
-│   │   ├── tts.py           # TTS synthesis (edge-tts → gTTS → sentinel)
-│   │   ├── __main__.py      # Interactive CLI demo (run_chat)
-│   │   └── data/            # Data ingestion pipeline
-│   │       ├── ingest.py    # CLI entry point
-│   │       ├── fetcher.py   # EOL / Wikipedia / API Ninjas / IUCN clients
-│   │       ├── supabase_store.py  # Supabase read/write adapter
-│   │       ├── lila.py      # LILA BC camera-trap image downloader
-│   │       ├── ultralytics_dl.py  # Ultralytics African Wildlife dataset
-│   │       └── species_list.json  # 48 Serengeti species definitions
-│   ├── supabase/schema.sql  # SQL DDL for species / documents / image_files tables
-│   ├── tests/               # pytest suite (no API keys needed)
-│   └── requirements.txt
-└── frontend/                # Mobile app (Expo / React Native)
+└── agent/                    # Python LangGraph agent (LLM orchestration)
+    ├── src/safari_guide/      # Main package — installed via `pip install -e agent/`
+    │   ├── state.py           # SafariGuideState + WildlifeIdentification schema
+    │   ├── graphs.py          # Graph builder + make_turn_input()
+    │   ├── nodes.py           # All 7 LangGraph nodes
+    │   ├── rag.py             # Hybrid BM25 + Pinecone retriever
+    │   ├── tts.py             # TTS synthesis (edge-tts → gTTS → sentinel)
+    │   ├── __main__.py        # Interactive CLI demo (run_chat)
+    │   └── data/              # Data ingestion pipeline
+    │       ├── ingest.py      # CLI entry point
+    │       ├── fetcher.py     # EOL / Wikipedia / API Ninjas / IUCN clients
+    │       ├── supabase_store.py  # Supabase read/write adapter
+    │       ├── lila.py        # LILA BC camera-trap image downloader
+    │       ├── ultralytics_dl.py  # Ultralytics African Wildlife dataset
+    │       └── species_list.json  # 48 Serengeti species definitions
+    ├── supabase/schema.sql    # SQL DDL for species / documents / image_files tables
+    ├── tests/                 # pytest suite (no API keys needed)
+    └── requirements.txt
 ```
+
+This project is currently scoped to the agent only: identifying African wildlife species from a photo and answering follow-up questions about the identified animal. A FastAPI backend and Expo mobile frontend existed in this repo's history but were removed to keep focus on the core AI agent; see git history if resurrecting them later.
 
 ## Setup
 
@@ -51,21 +52,21 @@ LANGFUSE_PUBLIC_KEY=...
 LANGFUSE_SECRET_KEY=...
 ```
 
-Install dependencies (run from `chat/`):
+Pinecone/Supabase are optional for local dev — `rag.py` degrades gracefully to a BM25-only / mock-document retriever when they're unreachable or unset.
+
+Install the agent package (editable):
 ```
-pip install -r requirements.txt
+pip install -e agent/
 ```
 
 ## Commands
 
-All commands run from the `chat/` directory.
-
-Run the interactive CLI demo:
+Run the agent's interactive CLI demo (from `agent/`):
 ```
 python -m safari_guide
 ```
 
-Run all tests (no API keys needed):
+Run all agent tests (from `agent/`, no API keys needed):
 ```
 pytest tests/
 ```
@@ -78,7 +79,7 @@ pytest tests/test_rag.py
 
 ### Data ingestion (one-time setup)
 
-Before first use, populate Supabase and Pinecone:
+Before first use, populate Supabase and Pinecone (from `agent/`):
 ```
 # Text only: EOL + Wikipedia + API Ninjas + IUCN → Supabase + Pinecone
 python -m safari_guide.data.ingest --text
@@ -93,18 +94,18 @@ python -m safari_guide.data.ingest --all
 python -m safari_guide.data.ingest --all --dry-run
 ```
 
-Run Supabase schema once (in Supabase dashboard SQL editor or psql):
+Run the Supabase schema once (in Supabase dashboard SQL editor or psql):
 ```
-chat/supabase/schema.sql
+agent/supabase/schema.sql
 ```
 
 ## Architecture
 
-This is a **LangGraph-based multi-turn conversational agent** — a mobile "Digital Safari Tour Guide." A tourist sends a photo and/or text question; the system responds with a scripted commentary as "Baako" (a 20-year Serengeti guide persona), optionally with synthesised audio.
+This is a **LangGraph-based multi-turn conversational agent** — a "Digital Safari Tour Guide." A tourist provides a photo and/or text question; the system responds with a scripted commentary as "Baako" (a 20-year Serengeti guide persona), optionally with synthesised audio.
 
 ### Two LLMs, one graph
 
-`build_graph(llm_vision, llm_text, retriever)` in `graphs.py` compiles a single `StateGraph` with a `MemorySaver` checkpointer. The caller passes a `thread_id`; all prior session state is restored automatically between turns.
+`build_graph(llm_vision, llm_text, retriever)` in `agent/src/safari_guide/graphs.py` compiles a single `StateGraph` with a `MemorySaver` checkpointer. The caller passes a `thread_id`; all prior session state is restored automatically between turns.
 
 - `llm_vision` — Gemini 1.5 Flash; used only in `node_analyze_image` for multimodal structured output
 - `llm_text` — DeepSeek Chat (via OpenAI-compatible API); used in `node_summarize_history` and `node_generate_guide_persona`
@@ -169,7 +170,7 @@ Fusion uses Reciprocal Rank Fusion (RRF, `rrf_k=60`) with equal weights (0.5/0.5
 2. `gTTS` — simpler fallback
 3. Returns sentinel `"NO_TTS_ENGINE_INSTALLED"` if neither is available
 
-Audio files are written to the OS temp directory (`tempfile.mkstemp`) with a `safari_` prefix.
+The agent writes audio to the OS temp directory (`tempfile.mkstemp`, `safari_` prefix) — it has no concept of a web-servable path.
 
 ### Data layer (`data/`)
 
@@ -184,9 +185,9 @@ Audio files are written to the OS temp directory (`tempfile.mkstemp`) with a `sa
 
 `node_summarize_history` fires when `len(chat_history) > SUMMARY_THRESHOLD` (default 10). It compresses all but the most recent 6 messages into `conversation_summary` using a rolling LLM call. The persona node injects this summary plus the last 6 messages and a one-line digest of all animals seen this session (`identification_history`) into the LLM context.
 
-### Production swap points
+## Production swap points
 
-- Checkpointer: `MemorySaver()` → `SqliteSaver.from_conn_string("safari.db")` (zero graph changes)
+- Checkpointer: `MemorySaver()` → `SqliteSaver`/Postgres-backed saver (zero graph changes) — needed for durable, multi-instance-safe chat history
 - RAG corpus: replace `_MOCK_DOCUMENTS` in `rag.py` or populate Supabase via `ingest.py`
 - TTS engine: replace `synthesise_audio()` in `tts.py` (e.g. ElevenLabs) — zero node changes
 - Observability: set `LANGFUSE_PUBLIC_KEY` + `LANGFUSE_SECRET_KEY` in `.env` for Langfuse tracing
