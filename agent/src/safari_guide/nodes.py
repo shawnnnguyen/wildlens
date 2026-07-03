@@ -25,6 +25,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from .rag import _EnsembleRetriever
 from .state import MIN_CONFIDENCE, SUMMARY_THRESHOLD, SafariGuideState, WildlifeIdentification
 from .tts import synthesise_audio
 
@@ -198,11 +199,15 @@ def node_retrieve_information(
     on both photo turns and text follow-up turns.
     """
     log.info("▶ NODE  retrieve_information")
-    species    = state.get("identification_result", {}).get("species", "")
-    follow_up  = state.get("user_message", "")
-    query      = f"{species} {follow_up}".strip() or "safari wildlife"
+    species     = state.get("identification_result", {}).get("species", "")
+    common_name = species.split("(")[0].strip()
+    follow_up   = state.get("user_message", "")
+    query       = f"{common_name} {follow_up}".strip() or "safari wildlife"
 
-    docs  = retriever.invoke(query)
+    if isinstance(retriever, _EnsembleRetriever):
+        docs = retriever.retrieve(query, species=common_name or None)
+    else:
+        docs = retriever.invoke(query)
     facts = "\n\n---\n\n".join(
         f"[Source: {d.metadata.get('species', 'Guidebook')}]\n{d.page_content}"
         for d in docs

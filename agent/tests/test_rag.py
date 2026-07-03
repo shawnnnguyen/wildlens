@@ -29,6 +29,7 @@ def _mock_init_rag(**kwargs):
         patch("safari_guide.rag.HuggingFaceEmbeddings", return_value=MagicMock()),
         patch("safari_guide.rag._init_pinecone_retriever", return_value=_NullRetriever()),
         patch("safari_guide.rag._load_bm25_corpus", return_value=_TEST_CORPUS),
+        patch("safari_guide.rag._load_cross_encoder", return_value=None),
     ):
         return init_rag(**kwargs)
 
