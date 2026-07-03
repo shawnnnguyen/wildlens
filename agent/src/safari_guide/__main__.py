@@ -42,7 +42,7 @@ def run_chat() -> None:
     if not os.getenv("DEEPSEEK_API_KEY"):
         raise EnvironmentError("DEEPSEEK_API_KEY is not set.")
 
-    llm_vision = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.35)
+    llm_vision = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.35)
     llm_text   = ChatOpenAI(
         model="deepseek-chat",
         api_key=os.getenv("DEEPSEEK_API_KEY"),

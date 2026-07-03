@@ -6,27 +6,39 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 safari-guide/
-└── agent/                    # Python LangGraph agent (LLM orchestration)
-    ├── src/safari_guide/      # Main package — installed via `pip install -e agent/`
-    │   ├── state.py           # SafariGuideState + WildlifeIdentification schema
-    │   ├── graphs.py          # Graph builder + make_turn_input()
-    │   ├── nodes.py           # All 7 LangGraph nodes
-    │   ├── rag.py             # Hybrid BM25 + Pinecone retriever
-    │   ├── tts.py             # TTS synthesis (edge-tts → gTTS → sentinel)
-    │   ├── __main__.py        # Interactive CLI demo (run_chat)
-    │   └── data/              # Data ingestion pipeline
-    │       ├── ingest.py      # CLI entry point
-    │       ├── fetcher.py     # EOL / Wikipedia / API Ninjas / IUCN clients
-    │       ├── supabase_store.py  # Supabase read/write adapter
-    │       ├── lila.py        # LILA BC camera-trap image downloader
-    │       ├── ultralytics_dl.py  # Ultralytics African Wildlife dataset
-    │       └── species_list.json  # 48 Serengeti species definitions
-    ├── supabase/schema.sql    # SQL DDL for species / documents / image_files tables
-    ├── tests/                 # pytest suite (no API keys needed)
+├── agent/                     # Python LangGraph agent (LLM orchestration)
+│   ├── src/safari_guide/      # Main package — installed via `pip install -e agent/`
+│   │   ├── state.py           # SafariGuideState + WildlifeIdentification schema
+│   │   ├── graphs.py          # Graph builder + make_turn_input()
+│   │   ├── nodes.py           # All 7 LangGraph nodes
+│   │   ├── rag.py             # Hybrid BM25 + Pinecone retriever
+│   │   ├── tts.py             # TTS synthesis (edge-tts → gTTS → sentinel)
+│   │   ├── __main__.py        # Interactive CLI demo (run_chat)
+│   │   └── data/              # Data ingestion pipeline
+│   │       ├── ingest.py      # CLI entry point
+│   │       ├── fetcher.py     # EOL / Wikipedia / API Ninjas / IUCN clients
+│   │       ├── supabase_store.py  # Supabase read/write adapter
+│   │       ├── lila.py        # LILA BC camera-trap image downloader
+│   │       ├── ultralytics_dl.py  # Ultralytics African Wildlife dataset
+│   │       └── species_list.json  # 48 Serengeti species definitions
+│   ├── supabase/schema.sql    # SQL DDL for species / documents / image_files tables
+│   ├── tests/                 # pytest suite (no API keys needed)
+│   └── requirements.txt
+└── backend/                   # FastAPI layer in front of the agent (HTTP API for a frontend)
+    ├── main.py                 # create_app(): lifespan wires LLMs + graph + RAG, CORS, exception handlers
+    ├── dependencies.py         # FastAPI Depends() accessors reading off app.state
+    ├── schemas.py               # Pydantic request/response models
+    ├── session_registry.py     # Tracks which thread_ids are active (MemorySaver has no eviction API)
+    ├── audio_store.py           # Stores/serves generated TTS audio + a cleanup janitor
+    ├── routers/
+    │   ├── chat.py              # POST /api/chat — image + text turn, drives the agent graph
+    │   ├── sessions.py          # GET /api/sessions/{id}/history, DELETE /api/sessions/{id}
+    │   ├── audio.py             # GET /api/audio/{filename}
+    │   └── health.py            # GET /health
     └── requirements.txt
 ```
 
-This project is currently scoped to the agent only: identifying African wildlife species from a photo and answering follow-up questions about the identified animal. A FastAPI backend and Expo mobile frontend existed in this repo's history but were removed to keep focus on the core AI agent; see git history if resurrecting them later.
+The agent identifies African wildlife species from a photo and answers follow-up questions about the identified animal. `backend/` is a thin FastAPI wrapper exposing this over HTTP for a (forthcoming) chat frontend — upload an image, then ask follow-up text questions in the same session via `thread_id`. An Expo mobile frontend existed earlier in this repo's history but was removed; see git history (commit `808b6bd`) if resurrecting it later.
 
 ## Setup
 
@@ -34,7 +46,7 @@ Copy `.env.example` to `.env` and fill in the required keys:
 
 ```
 # Required — core LLMs
-GOOGLE_API_KEY=...           # Gemini 1.5 Flash (vision/multimodal)
+GOOGLE_API_KEY=...           # Gemini 2.0 Flash (vision/multimodal)
 DEEPSEEK_API_KEY=...         # DeepSeek Chat (text generation via OpenAI-compatible API)
 
 # Required — vector + document store
@@ -59,11 +71,21 @@ Install the agent package (editable):
 pip install -e agent/
 ```
 
+Install the backend's own dependencies:
+```
+pip install -r backend/requirements.txt
+```
+
 ## Commands
 
 Run the agent's interactive CLI demo (from `agent/`):
 ```
 python -m safari_guide
+```
+
+Run the FastAPI backend (from repo root; requires the agent package installed and `GOOGLE_API_KEY`/`DEEPSEEK_API_KEY` set):
+```
+uvicorn backend.main:app --reload
 ```
 
 Run all agent tests (from `agent/`, no API keys needed):
@@ -107,7 +129,7 @@ This is a **LangGraph-based multi-turn conversational agent** — a "Digital Saf
 
 `build_graph(llm_vision, llm_text, retriever)` in `agent/src/safari_guide/graphs.py` compiles a single `StateGraph` with a `MemorySaver` checkpointer. The caller passes a `thread_id`; all prior session state is restored automatically between turns.
 
-- `llm_vision` — Gemini 1.5 Flash; used only in `node_analyze_image` for multimodal structured output
+- `llm_vision` — Gemini 2.0 Flash; used only in `node_analyze_image` for multimodal structured output
 - `llm_text` — DeepSeek Chat (via OpenAI-compatible API); used in `node_summarize_history` and `node_generate_guide_persona`
 
 ### Graph topology (single compiled graph)

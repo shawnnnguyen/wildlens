@@ -17,10 +17,16 @@ agent/faiss_wildlife_index/
 agent/audio_output/
 agent/data/cache/
 
+# Generated at runtime (backend/)
+backend/static/audio/
+
 # IDE
 .idea/
 .vscode/
 .claude/
+
+# Agent skills (installed locally via `npx skills add`)
+.agents/
 
 # OS
 .DS_Store
