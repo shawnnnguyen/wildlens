@@ -31,3 +31,6 @@ backend/static/audio/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local Claude Code guidance (not shared with the team)
+CLAUDE.md

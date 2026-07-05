@@ -13,6 +13,9 @@ langchain-huggingface>=1.0.0         # HuggingFace embeddings
 langchain-pinecone>=0.2.0            # LangChain integration for Pinecone
 pinecone>=3.0.0                      # Pinecone Python client v3+
 
+# ── Web search — Tavily (live retrieval fallback/supplement) ──────────────────
+tavily-python>=0.5.0
+
 # ── Document + image store — Supabase ─────────────────────────────────────────
 supabase>=2.0.0                      # Supabase Python client
 

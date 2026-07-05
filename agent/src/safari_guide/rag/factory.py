@@ -1,25 +1,9 @@
 """
-RAG initialisation: hybrid retriever combining Pinecone semantic search + BM25 keyword search.
+init_rag(): builds the hybrid retriever stack from config/env vars.
 
-Retrieval strategy
-──────────────────
-Semantic (Pinecone) — cloud vector store; 384-dim all-MiniLM-L6-v2 embeddings;
-                       catches paraphrases and concept-level matches.
-Keyword  (BM25)     — rebuilt in-memory from Supabase document corpus each startup;
-                       catches exact species names and rare terms.
-Fusion              — EnsembleRetriever merges both ranked lists via Reciprocal Rank
-                       Fusion (RRF), giving each document a combined score.
-
-Data sources
-────────────
-Pinecone (namespace='text') — pre-ingested EOL + IUCN + handcrafted document vectors.
-Supabase (documents table)  — raw document chunks loaded for BM25 rebuild at startup.
-
-Fallback
-────────
-If Supabase is unreachable or returns no documents, BM25 falls back to the
-built-in mock corpus (_MOCK_DOCUMENTS) so the app is never completely broken
-even without a live database connection.
+Connects to Pinecone, Supabase, and Tavily, and falls back gracefully
+(null retriever / mock corpus / no reranker) when any of them is
+unreachable or unconfigured, so the app is never completely broken.
 
 Ingestion
 ─────────
@@ -34,17 +18,17 @@ import os
 from typing import Any
 
 from langchain_community.retrievers import BM25Retriever
-from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
-from langchain_core.retrievers import BaseRetriever
-from pydantic import ConfigDict
 
 try:
     from langchain_huggingface import HuggingFaceEmbeddings
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings  # type: ignore[assignment]
 
-log = logging.getLogger("safari_guide.rag")
+from .backends import _NullRetriever, _PineconeRetrieverWrapper, _TavilyRetriever
+from .ranking import _EnsembleRetriever
+
+log = logging.getLogger(__name__)
 
 
 # Emergency fallback — used only if Supabase is unreachable at startup
@@ -56,56 +40,33 @@ _MOCK_DOCUMENTS: list[Document] = [
 ]
 
 
-class _EnsembleRetriever(BaseRetriever):
-    """Minimal Reciprocal Rank Fusion retriever combining multiple sub-retrievers."""
-
-    retrievers: list[Any]
-    weights: list[float]
-    rrf_k: int = 60
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)
-
-    def _get_relevant_documents(
-        self,
-        query: str,
-        *,
-        run_manager: CallbackManagerForRetrieverRun,
-    ) -> list[Document]:
-        scores:  dict[str, float]    = {}
-        doc_map: dict[str, Document] = {}
-
-        for retriever, weight in zip(self.retrievers, self.weights):
-            try:
-                docs = retriever.invoke(query)
-            except Exception:
-                docs = getattr(retriever, "get_relevant_documents", lambda q: [])(query)
-
-            for rank, doc in enumerate(docs):
-                key = doc.page_content[:120]
-                if key not in doc_map:
-                    doc_map[key] = doc
-                    scores[key]  = 0.0
-                scores[key] += weight / (self.rrf_k + rank + 1)
-
-        return [doc_map[k] for k in sorted(scores, key=scores.__getitem__, reverse=True)]
-
-
 def init_rag(
-    k:               int   = 5,
-    semantic_weight: float = 0.5,
-    bm25_weight:     float = 0.5,
+    k:                int   = 5,
+    semantic_weight:  float = 0.5,
+    bm25_weight:      float = 0.5,
+    web_weight:       float = 0.2,
+    final_k:          int   = 6,
+    rerank_threshold: float = 0.0,
+    use_reranker:     bool  = True,
 ):
     """
-    Return a hybrid EnsembleRetriever (BM25 + Pinecone semantic search).
+    Return a hybrid EnsembleRetriever (BM25 + Pinecone semantic search + Tavily web search).
 
     Args:
-        k:               Number of documents each sub-retriever returns before fusion.
-        semantic_weight: RRF weight for the Pinecone retriever (0–1).
-        bm25_weight:     RRF weight for the BM25 retriever (0–1).
+        k:                Number of documents each sub-retriever returns before fusion.
+        semantic_weight:  RRF weight for the Pinecone retriever (0–1).
+        bm25_weight:      RRF weight for the BM25 retriever (0–1).
+        web_weight:       RRF weight for the Tavily web retriever (0–1). Kept lower than
+                           the internal sources by default — web results are unvetted and
+                           only meant to supplement the curated guidebook corpus.
+        final_k:          Max documents returned after fusion (and re-ranking, if enabled).
+        rerank_threshold: Minimum cross-encoder relevance score to keep a candidate.
+        use_reranker:     Load a cross-encoder to re-rank fused candidates.
 
     Env vars consumed:
         PINECONE_API_KEY, PINECONE_INDEX_NAME  — Pinecone connection
         SUPABASE_URL, SUPABASE_KEY             — Supabase connection for BM25 corpus
+        TAVILY_API_KEY                         — Tavily web search connection
     """
     log.info("Loading HuggingFace embedding model (all-MiniLM-L6-v2) …")
     embeddings = HuggingFaceEmbeddings(
@@ -121,16 +82,27 @@ def init_rag(
     documents = _load_bm25_corpus()
     bm25_retriever = BM25Retriever.from_documents(documents, k=k)
 
+    # ── Tavily web search retriever ───────────────────────────────────────────
+    tavily_retriever = _init_tavily_retriever(k)
+
+    # ── Cross-encoder re-rank (optional) ──────────────────────────────────────
+    cross_encoder = (
+        _load_cross_encoder("cross-encoder/ms-marco-MiniLM-L-6-v2") if use_reranker else None
+    )
+
     # ── Hybrid fusion via Reciprocal Rank Fusion ──────────────────────────────
     log.info(
         f"Hybrid retriever ready — "
-        f"BM25 weight={bm25_weight}, semantic weight={semantic_weight}, k={k}, "
-        f"corpus={len(documents)} docs"
+        f"BM25 weight={bm25_weight}, semantic weight={semantic_weight}, web weight={web_weight}, "
+        f"k={k}, corpus={len(documents)} docs, reranker={'on' if cross_encoder else 'off'}"
     )
     return _EnsembleRetriever(
-        retrievers=[bm25_retriever, pinecone_retriever],
-        weights=[bm25_weight, semantic_weight],
+        retrievers=[bm25_retriever, pinecone_retriever, tavily_retriever],
+        weights=[bm25_weight, semantic_weight, web_weight],
         rrf_k=60,
+        final_k=final_k,
+        cross_encoder=cross_encoder,
+        rerank_threshold=rerank_threshold,
     )
 
 
@@ -166,10 +138,33 @@ def _init_pinecone_retriever(embeddings, k: int):
             )
 
         vectorstore = PineconeVectorStore(index=index, embedding=embeddings, namespace="text")
-        return vectorstore.as_retriever(search_kwargs={"k": k})
+        return _PineconeRetrieverWrapper(vectorstore=vectorstore, k=k)
 
     except Exception as exc:
         log.warning(f"Pinecone init failed ({exc}) — falling back to null semantic retriever")
+        return _NullRetriever(k=k)
+
+
+def _init_tavily_retriever(k: int):
+    """Connect to Tavily and return a web-search retriever, or a no-op stub."""
+    tavily_api_key = os.getenv("TAVILY_API_KEY")
+
+    if not tavily_api_key:
+        log.warning(
+            "TAVILY_API_KEY not set — web retriever will be a no-op stub. "
+            "Set the key to enable live web search fallback."
+        )
+        return _NullRetriever(k=k)
+
+    try:
+        from tavily import TavilyClient
+
+        client = TavilyClient(api_key=tavily_api_key)
+        log.info("Tavily web search client connected")
+        return _TavilyRetriever(client=client, k=k)
+
+    except Exception as exc:
+        log.warning(f"Tavily init failed ({exc}) — falling back to null web retriever")
         return _NullRetriever(k=k)
 
 
@@ -189,7 +184,7 @@ def _load_bm25_corpus() -> list[Document]:
         return _MOCK_DOCUMENTS
 
     try:
-        from .data.supabase_store import SupabaseStore
+        from ..data.supabase_store import SupabaseStore
         store = SupabaseStore()
         docs  = store.load_all_documents()
         if docs:
@@ -204,20 +199,18 @@ def _load_bm25_corpus() -> list[Document]:
         return _MOCK_DOCUMENTS
 
 
-# ── Null retriever stub ───────────────────────────────────────────────────────
-
-class _NullRetriever(BaseRetriever):
+def _load_cross_encoder(model_name: str) -> Any | None:
     """
-    Stand-in for Pinecone retriever when credentials are absent or init fails.
-    Returns empty results so _EnsembleRetriever degrades gracefully to BM25-only.
+    Load a cross-encoder for re-ranking fused RRF candidates.
+    Returns None on any failure (offline environment, no cached weights,
+    missing dependency) so _EnsembleRetriever degrades to RRF-only ranking —
+    the same graceful-degradation pattern used for Pinecone/Supabase above.
     """
-
-    k: int = 5
-
-    def _get_relevant_documents(
-        self,
-        query: str,
-        *,
-        run_manager: CallbackManagerForRetrieverRun,
-    ) -> list[Document]:
-        return []
+    try:
+        from sentence_transformers import CrossEncoder
+        model = CrossEncoder(model_name)
+        log.info(f"Cross-encoder '{model_name}' loaded for re-ranking")
+        return model
+    except Exception as exc:
+        log.warning(f"Cross-encoder load failed ({exc}) — re-ranking disabled, using RRF scores only")
+        return None

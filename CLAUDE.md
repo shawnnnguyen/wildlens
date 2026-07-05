@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Git workflow
+
+Always ask for explicit approval before running `git commit` or `git push` in this repo — do not commit or push proactively, even as a step in an already-approved plan. Note: this repo appears to auto-push commits to `origin` at the IDE level (no git hook or `push.autoSetupRemote` config causes it, but commits have landed on the remote without an explicit `git push`), so a commit here carries the same risk as a push and needs the same confirmation.
+
 ## Repository layout
 
 ```

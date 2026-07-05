@@ -25,6 +25,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from .rag import _EnsembleRetriever
 from .state import MIN_CONFIDENCE, SUMMARY_THRESHOLD, SafariGuideState, WildlifeIdentification
 from .tts import synthesise_audio
 
@@ -198,17 +199,31 @@ def node_retrieve_information(
     on both photo turns and text follow-up turns.
     """
     log.info("▶ NODE  retrieve_information")
-    species    = state.get("identification_result", {}).get("species", "")
-    follow_up  = state.get("user_message", "")
-    query      = f"{species} {follow_up}".strip() or "safari wildlife"
+    species     = state.get("identification_result", {}).get("species", "")
+    common_name = species.split("(")[0].strip()
+    follow_up   = state.get("user_message", "")
+    query       = f"{common_name} {follow_up}".strip() or "safari wildlife"
 
-    docs  = retriever.invoke(query)
-    facts = "\n\n---\n\n".join(
-        f"[Source: {d.metadata.get('species', 'Guidebook')}]\n{d.page_content}"
-        for d in docs
-    )
+    if isinstance(retriever, _EnsembleRetriever):
+        docs = retriever.retrieve(query, species=common_name or None)
+    else:
+        docs = retriever.invoke(query)
+    facts = "\n\n---\n\n".join(_format_fact(d) for d in docs)
     log.info("   → %d docs retrieved | query: '%s'", len(docs), query)
     return {"retrieved_facts": facts}
+
+
+def _format_fact(doc) -> str:
+    """
+    Label each fact by provenance so the persona LLM can tell curated
+    guidebook data (vetted at ingest time) apart from live Tavily web
+    results, and prefer the former on conflict — see node_generate_guide_persona.
+    """
+    if doc.metadata.get("source") == "web":
+        label = doc.metadata.get("title") or doc.metadata.get("url") or "unknown page"
+        return f"[Source: Web — {label}]\n{doc.page_content}"
+    species = doc.metadata.get("species") or "Guidebook"
+    return f"[Source: Guidebook — {species}]\n{doc.page_content}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -329,7 +344,9 @@ def node_generate_guide_persona(
     if follow_up:
         task = HumanMessage(content=(
             f"The tourist is asking: \"{follow_up}\"\n\n"
-            f"Relevant guidebook facts:\n{facts}{animals_digest}\n\n"
+            f"Relevant facts (Guidebook = vetted internal data; Web = live search, "
+            f"supplementary only — prefer Guidebook on conflict, especially for "
+            f"safety/danger information):\n{facts}{animals_digest}\n\n"
             "Answer as Baako. If the question refers to a previous animal, "
             "use the session memory and animals list above."
         ))
@@ -340,7 +357,9 @@ def node_generate_guide_persona(
             f"{safety_prefix}"
             f"You have just spotted a {species}! "
             f"Observable traits: {trait_line}.\n\n"
-            f"Verified guidebook facts:\n{facts}{animals_digest}\n\n"
+            f"Verified facts (Guidebook = vetted internal data; Web = live search, "
+            f"supplementary only — prefer Guidebook on conflict, especially for "
+            f"safety/danger information):\n{facts}{animals_digest}\n\n"
             "Generate a captivating audio tour-guide script as Baako."
         ))
 
