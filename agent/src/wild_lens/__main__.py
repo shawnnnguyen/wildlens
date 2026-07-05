@@ -8,6 +8,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from .graphs import build_graph, make_turn_input
+from .observability import init_langfuse, invoke_with_tracing
 from .rag import init_rag
 
 load_dotenv()
@@ -17,23 +18,7 @@ logging.basicConfig(
     format="%(asctime)s │ %(levelname)-8s │ %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("safari_guide")
-
-
-def _build_langfuse_callback():
-    public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
-    secret_key = os.getenv("LANGFUSE_SECRET_KEY")
-    if not (public_key and secret_key):
-        return None
-    try:
-        from langfuse.langchain import CallbackHandler
-        return CallbackHandler(
-            public_key=public_key,
-            secret_key=secret_key,
-            host=os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com"),
-        )
-    except Exception:
-        return None
+log = logging.getLogger("wild_lens")
 
 
 def run_chat() -> None:
@@ -52,12 +37,17 @@ def run_chat() -> None:
 
     print("Loading RAG retriever …")
     retriever = init_rag()
-    app       = build_graph(llm_vision, llm_text, retriever)
 
-    langfuse_cb = _build_langfuse_callback()
+    langfuse_cb = init_langfuse()
+    app = build_graph(llm_vision, llm_text, retriever, tracing_enabled=bool(langfuse_cb))
+
     config: dict = {"configurable": {"thread_id": "chat-session"}}
     if langfuse_cb:
         config["callbacks"] = [langfuse_cb]
+        config["metadata"] = {
+            "langfuse_session_id": "chat-session",
+            "langfuse_tags": ["cli"],
+        }
 
     print("\n" + "═" * 60)
     print("  Baako — Digital Safari Tour Guide")
@@ -97,13 +87,15 @@ def run_chat() -> None:
             user_message = text
 
         try:
-            result = app.invoke(
+            result = invoke_with_tracing(
+                app,
                 make_turn_input(
                     image_path=image_path,
                     user_message=user_message,
                     voice_requested=voice_requested,
                 ),
-                config=config,
+                config,
+                langfuse_cb,
             )
         except Exception as exc:
             print(f"\n  [Error] {exc}\n")

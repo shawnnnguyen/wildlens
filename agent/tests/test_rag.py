@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
-from safari_guide.rag import (
+from wild_lens.rag import (
     _MOCK_DOCUMENTS,
     _EnsembleRetriever,
     _NullRetriever,
@@ -34,10 +34,10 @@ _TEST_CORPUS = [
 def _mock_init_rag(**kwargs):
     """Run init_rag() with all external calls stubbed out."""
     with (
-        patch("safari_guide.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
-        patch("safari_guide.rag.factory._init_pinecone_retriever", return_value=_NullRetriever()),
-        patch("safari_guide.rag.factory._load_bm25_corpus", return_value=_TEST_CORPUS),
-        patch("safari_guide.rag.factory._load_cross_encoder", return_value=None),
+        patch("wild_lens.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
+        patch("wild_lens.rag.factory._init_pinecone_retriever", return_value=_NullRetriever()),
+        patch("wild_lens.rag.factory._load_bm25_corpus", return_value=_TEST_CORPUS),
+        patch("wild_lens.rag.factory._load_cross_encoder", return_value=None),
     ):
         return init_rag(**kwargs)
 

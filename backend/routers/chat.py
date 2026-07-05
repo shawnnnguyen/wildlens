@@ -6,10 +6,11 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from safari_guide.graphs import make_turn_input
+from wild_lens.graphs import make_turn_input
+from wild_lens.observability import invoke_with_tracing
 
 from ..audio_store import store_audio
-from ..dependencies import get_graph, get_session_registry
+from ..dependencies import get_graph, get_langfuse_handler, get_session_registry
 from ..schemas import (
     ChatResponse,
     ErrorDetail,
@@ -63,6 +64,7 @@ async def chat(
     image: UploadFile | None = File(None),
     graph=Depends(get_graph),
     registry: SessionRegistry = Depends(get_session_registry),
+    langfuse_handler=Depends(get_langfuse_handler),
 ) -> ChatResponse:
     # ── Input validation ──────────────────────────────────────────────────────
     if not message and image is None:
@@ -115,9 +117,20 @@ async def chat(
         voice_requested=voice_requested,
     )
     config = {"configurable": {"thread_id": thread_id}}
+    if langfuse_handler:
+        config["callbacks"] = [langfuse_handler]
+        config["metadata"] = {
+            "langfuse_session_id": thread_id,
+            "langfuse_tags": [
+                "photo_turn" if image_path else "text_turn",
+                *(["voice_requested"] if voice_requested else []),
+            ],
+        }
 
     try:
-        result: dict = await asyncio.to_thread(graph.invoke, turn_input, config)
+        result: dict = await asyncio.to_thread(
+            invoke_with_tracing, graph, turn_input, config, langfuse_handler
+        )
     except Exception:
         log.exception("Graph invocation failed for thread_id=%s", thread_id)
         raise HTTPException(

@@ -14,8 +14,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from safari_guide.state import MIN_CONFIDENCE, SafariGuideState, WildlifeIdentification
-from safari_guide.nodes import (
+from wild_lens.state import MIN_CONFIDENCE, SafariGuideState, WildlifeIdentification
+from wild_lens.nodes import (
     node_unclear_photo_fallback,
     node_safety_check,
     node_generate_audio,
@@ -99,7 +99,7 @@ def test_generate_audio_returns_empty_when_no_script():
 
 def test_generate_audio_calls_synthesise(tmp_path):
     state = _base_state(final_script="The lion roars across the savanna.")
-    with patch("safari_guide.nodes.synthesise_audio", return_value=str(tmp_path / "test.mp3")) as mock_tts:
+    with patch("wild_lens.nodes.synthesise_audio", return_value=str(tmp_path / "test.mp3")) as mock_tts:
         result = node_generate_audio(state)
     mock_tts.assert_called_once_with("The lion roars across the savanna.")
     assert result["audio_file_path"].endswith("test.mp3")

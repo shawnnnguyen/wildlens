@@ -19,3 +19,7 @@ def get_rag_backend(request: Request) -> str:
 
 def get_tts_backend(request: Request) -> str:
     return request.app.state.tts_backend
+
+
+def get_langfuse_handler(request: Request):
+    return request.app.state.langfuse_handler

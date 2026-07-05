@@ -88,6 +88,7 @@ def build_graph(
     llm_vision: BaseChatModel,
     llm_text: BaseChatModel,
     retriever: BaseRetriever,
+    tracing_enabled: bool = False,
 ):
     """
     Compile and return the Safari Guide graph with a MemorySaver checkpointer.
@@ -95,6 +96,10 @@ def build_graph(
     llm_vision — multimodal model (Gemini) used only for node_analyze_image.
     llm_text   — text model (DeepSeek) used for summarise + persona nodes.
     retriever  — hybrid EnsembleRetriever (BM25 + FAISS) from init_rag().
+    tracing_enabled — when True, wraps retrieval and TTS with Langfuse
+        @observe() spans. Both call plain Python methods (retriever.retrieve(),
+        synthesise_audio()) rather than LangChain Runnable.invoke(), so a
+        LangChain-callback-based tracer never sees them otherwise.
 
     Dependencies are injected via closures — each node remains a pure function
     and can be unit-tested with mocked llm / retriever.
@@ -109,6 +114,12 @@ def build_graph(
     def _retrieve(s):  return node_retrieve_information(s, retriever)
     def _summarize(s): return node_summarize_history(s, llm_text)
     def _persona(s):   return node_generate_guide_persona(s, llm_text)
+    _audio = node_generate_audio
+
+    if tracing_enabled:
+        from langfuse import observe
+        _retrieve = observe(name="retrieve_information", as_type="retriever")(_retrieve)
+        _audio    = observe(name="generate_audio", as_type="tool")(_audio)
 
     g = StateGraph(SafariGuideState)
 
@@ -119,7 +130,7 @@ def build_graph(
     g.add_node("summarize_history",       _summarize)
     g.add_node("retrieve_information",    _retrieve)
     g.add_node("generate_guide_persona",  _persona)
-    g.add_node("generate_audio",          node_generate_audio)
+    g.add_node("generate_audio",          _audio)
 
     # ── Entry: photo vs. text turn ────────────────────────────────────────────
     g.add_conditional_edges(
