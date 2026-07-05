@@ -30,7 +30,7 @@ class SafariGuideState(TypedDict):
 
     Caller contract per turn
     ────────────────────────
-    Pass only: image_path, user_message, voice_requested, plus the four reset
+    Pass only: image_path, user_message, voice_requested, plus the five reset
     fields below.  The MemorySaver checkpointer restores everything else.
     """
 
@@ -44,6 +44,11 @@ class SafariGuideState(TypedDict):
     audio_file_path:        str   # reset to "" each turn; written only if voice_requested
     retrieved_facts:        str   # reset to "" each turn; written by retrieve node
     error_message:          str   # reset to "" each turn; written on fallback/error
+    current_analysis:       dict  # reset to {} each turn; this turn's raw analysis result
+                                  # (success or error stub), read by route_after_analysis and
+                                  # node_unclear_photo_fallback — never identification_result,
+                                  # so a low-confidence/failed photo can't clobber the last
+                                  # confidently-identified animal.
 
     # ── Conversation memory (restored by checkpointer between turns) ──────────
     chat_history:           Annotated[list[BaseMessage], add_messages]
@@ -57,6 +62,12 @@ class SafariGuideState(TypedDict):
     # LLM-compressed digest of older chat_history turns (beyond the 6-message
     # sliding window).  Injected into the persona prompt for long-range recall
     # without growing the LLM context window unboundedly.
+
+    summarized_upto:        int
+    # Index boundary into chat_history already folded into conversation_summary.
+    # NOT a per-turn reset — must persist across turns like conversation_summary
+    # itself. node_summarize_history only sends the delta since this boundary to
+    # the LLM, keeping its cost bounded instead of growing with session length.
 
     # ── Current-animal pipeline data (overwritten each photo turn) ───────────
     identification_result:  dict  # keys: species, confidence_score, visual_traits,
