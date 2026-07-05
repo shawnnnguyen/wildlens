@@ -9,9 +9,9 @@ Always ask for explicit approval before running `git commit` or `git push` in th
 ## Repository layout
 
 ```
-safari-guide/
+wildlens/
 ├── agent/                     # Python LangGraph agent (LLM orchestration)
-│   ├── src/safari_guide/      # Main package — installed via `pip install -e agent/`
+│   ├── src/wild_lens/         # Main package — installed via `pip install -e agent/`
 │   │   ├── state.py           # SafariGuideState + WildlifeIdentification schema
 │   │   ├── graphs.py          # Graph builder + make_turn_input()
 │   │   ├── nodes.py           # All 7 LangGraph nodes
@@ -84,7 +84,7 @@ pip install -r backend/requirements.txt
 
 Run the agent's interactive CLI demo (from `agent/`):
 ```
-python -m safari_guide
+python -m wild_lens
 ```
 
 Run the FastAPI backend (from repo root; requires the agent package installed and `GOOGLE_API_KEY`/`DEEPSEEK_API_KEY` set):
@@ -108,16 +108,16 @@ pytest tests/test_rag.py
 Before first use, populate Supabase and Pinecone (from `agent/`):
 ```
 # Text only: EOL + Wikipedia + API Ninjas + IUCN → Supabase + Pinecone
-python -m safari_guide.data.ingest --text
+python -m wild_lens.data.ingest --text
 
 # All image sources (EOL URLs + LILA BC + Ultralytics)
-python -m safari_guide.data.ingest --images
+python -m wild_lens.data.ingest --images
 
 # Everything
-python -m safari_guide.data.ingest --all
+python -m wild_lens.data.ingest --all
 
 # Dry run — show what would be done without writing
-python -m safari_guide.data.ingest --all --dry-run
+python -m wild_lens.data.ingest --all --dry-run
 ```
 
 Run the Supabase schema once (in Supabase dashboard SQL editor or psql):
@@ -131,7 +131,7 @@ This is a **LangGraph-based multi-turn conversational agent** — a "Digital Saf
 
 ### Two LLMs, one graph
 
-`build_graph(llm_vision, llm_text, retriever)` in `agent/src/safari_guide/graphs.py` compiles a single `StateGraph` with a `MemorySaver` checkpointer. The caller passes a `thread_id`; all prior session state is restored automatically between turns.
+`build_graph(llm_vision, llm_text, retriever)` in `agent/src/wild_lens/graphs.py` compiles a single `StateGraph` with a `MemorySaver` checkpointer. The caller passes a `thread_id`; all prior session state is restored automatically between turns.
 
 - `llm_vision` — Gemini 2.0 Flash; used only in `node_analyze_image` for multimodal structured output
 - `llm_text` — DeepSeek Chat (via OpenAI-compatible API); used in `node_summarize_history` and `node_generate_guide_persona`
