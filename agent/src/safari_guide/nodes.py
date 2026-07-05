@@ -208,12 +208,22 @@ def node_retrieve_information(
         docs = retriever.retrieve(query, species=common_name or None)
     else:
         docs = retriever.invoke(query)
-    facts = "\n\n---\n\n".join(
-        f"[Source: {d.metadata.get('species', 'Guidebook')}]\n{d.page_content}"
-        for d in docs
-    )
+    facts = "\n\n---\n\n".join(_format_fact(d) for d in docs)
     log.info("   → %d docs retrieved | query: '%s'", len(docs), query)
     return {"retrieved_facts": facts}
+
+
+def _format_fact(doc) -> str:
+    """
+    Label each fact by provenance so the persona LLM can tell curated
+    guidebook data (vetted at ingest time) apart from live Tavily web
+    results, and prefer the former on conflict — see node_generate_guide_persona.
+    """
+    if doc.metadata.get("source") == "web":
+        label = doc.metadata.get("title") or doc.metadata.get("url") or "unknown page"
+        return f"[Source: Web — {label}]\n{doc.page_content}"
+    species = doc.metadata.get("species") or "Guidebook"
+    return f"[Source: Guidebook — {species}]\n{doc.page_content}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -334,7 +344,9 @@ def node_generate_guide_persona(
     if follow_up:
         task = HumanMessage(content=(
             f"The tourist is asking: \"{follow_up}\"\n\n"
-            f"Relevant guidebook facts:\n{facts}{animals_digest}\n\n"
+            f"Relevant facts (Guidebook = vetted internal data; Web = live search, "
+            f"supplementary only — prefer Guidebook on conflict, especially for "
+            f"safety/danger information):\n{facts}{animals_digest}\n\n"
             "Answer as Baako. If the question refers to a previous animal, "
             "use the session memory and animals list above."
         ))
@@ -345,7 +357,9 @@ def node_generate_guide_persona(
             f"{safety_prefix}"
             f"You have just spotted a {species}! "
             f"Observable traits: {trait_line}.\n\n"
-            f"Verified guidebook facts:\n{facts}{animals_digest}\n\n"
+            f"Verified facts (Guidebook = vetted internal data; Web = live search, "
+            f"supplementary only — prefer Guidebook on conflict, especially for "
+            f"safety/danger information):\n{facts}{animals_digest}\n\n"
             "Generate a captivating audio tour-guide script as Baako."
         ))
 
