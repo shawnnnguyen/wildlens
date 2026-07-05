@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any
 
 from langchain_community.retrievers import BM25Retriever
@@ -85,25 +86,46 @@ def init_rag(
     # ── Tavily web search retriever ───────────────────────────────────────────
     tavily_retriever = _init_tavily_retriever(k)
 
-    # ── Cross-encoder re-rank (optional) ──────────────────────────────────────
-    cross_encoder = (
-        _load_cross_encoder("cross-encoder/ms-marco-MiniLM-L-6-v2") if use_reranker else None
-    )
-
     # ── Hybrid fusion via Reciprocal Rank Fusion ──────────────────────────────
     log.info(
         f"Hybrid retriever ready — "
         f"BM25 weight={bm25_weight}, semantic weight={semantic_weight}, web weight={web_weight}, "
-        f"k={k}, corpus={len(documents)} docs, reranker={'on' if cross_encoder else 'off'}"
+        f"k={k}, corpus={len(documents)} docs"
     )
-    return _EnsembleRetriever(
+    retriever = _EnsembleRetriever(
         retrievers=[bm25_retriever, pinecone_retriever, tavily_retriever],
         weights=[bm25_weight, semantic_weight, web_weight],
         rrf_k=60,
         final_k=final_k,
-        cross_encoder=cross_encoder,
+        cross_encoder=None,   # loaded in the background below; RRF-only until ready
         rerank_threshold=rerank_threshold,
     )
+
+    # ── Cross-encoder re-rank (optional, loaded in the background) ───────────
+    # Loading synchronously here would block the entire app's startup/readiness
+    # on downloading model weights from HuggingFace Hub (see backend/main.py's
+    # lifespan(), which awaits init_rag() before the app is considered ready).
+    # Requests served before this finishes simply get RRF-only ranking — no
+    # worse than the existing "reranker disabled" fallback path already used
+    # when the load fails outright.
+    if use_reranker:
+        threading.Thread(
+            target=_load_cross_encoder_async,
+            args=(retriever, "cross-encoder/ms-marco-MiniLM-L-6-v2"),
+            daemon=True,
+        ).start()
+
+    return retriever
+
+
+def _load_cross_encoder_async(retriever: _EnsembleRetriever, model_name: str) -> None:
+    """Background-thread target: load the cross-encoder, then attach it to the
+    already-returned retriever. Plain attribute assignment — _EnsembleRetriever
+    doesn't set validate_assignment, so this is a cheap, GIL-atomic swap."""
+    model = _load_cross_encoder(model_name)
+    retriever.cross_encoder = model
+    if model is not None:
+        log.info("Cross-encoder ready — reranking now active for subsequent requests")
 
 
 # ── Private helpers ───────────────────────────────────────────────────────────

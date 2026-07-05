@@ -99,6 +99,10 @@ class EOLClient:
         Return dict of {section: text} for the species.
         Returns an empty dict if the species cannot be found.
         Reads from cache if available.
+
+        A transient network error is NOT cached (only a confirmed "not found"
+        result is) — otherwise a network blip during ingestion would permanently
+        poison this species with empty data until a full --force re-fetch.
         """
         cache_key  = scientific_name.lower().replace(" ", "_")
         cache_file = _CACHE_EOL / f"{cache_key}.json"
@@ -108,7 +112,11 @@ class EOLClient:
             raw = json.loads(cache_file.read_text(encoding="utf-8"))
         else:
             log.info(f"  [EOL] Fetching: {scientific_name}")
-            raw = self._fetch_raw(scientific_name)
+            try:
+                raw = self._fetch_raw(scientific_name)
+            except httpx.HTTPError as exc:
+                log.warning(f"  [EOL] Transient error for {scientific_name!r} — not caching, will retry next run: {exc}")
+                return {}
             cache_file.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
             time.sleep(self._DELAY)
 
@@ -117,19 +125,20 @@ class EOLClient:
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _fetch_raw(self, scientific_name: str) -> dict:
-        """Search for species and return the raw page detail JSON."""
+        """
+        Search for species and return the raw page detail JSON.
+
+        httpx.HTTPError propagates to the caller (fetch()) uncaught — only a
+        confirmed "not found" (empty results / missing page_id) returns {} here.
+        """
         # Step 1: search
         params: dict[str, Any] = {"q": scientific_name, "exact": False, "page": 1, "per_page": 1}
         if self._key:
             params["key"] = self._key
 
-        try:
-            resp = self._client.get(self.SEARCH_URL, params=params)
-            resp.raise_for_status()
-            results = resp.json().get("results", [])
-        except httpx.HTTPError as exc:
-            log.warning(f"  [EOL] Search failed for {scientific_name!r}: {exc}")
-            return {}
+        resp = self._client.get(self.SEARCH_URL, params=params)
+        resp.raise_for_status()
+        results = resp.json().get("results", [])
 
         if not results:
             log.warning(f"  [EOL] No results for {scientific_name!r}")
@@ -155,14 +164,10 @@ class EOLClient:
         if self._key:
             page_params["key"] = self._key
 
-        try:
-            url  = self.PAGE_URL.format(page_id=page_id)
-            resp = self._client.get(url, params=page_params)
-            resp.raise_for_status()
-            return resp.json()
-        except httpx.HTTPError as exc:
-            log.warning(f"  [EOL] Page fetch failed for page_id={page_id}: {exc}")
-            return {}
+        url  = self.PAGE_URL.format(page_id=page_id)
+        resp = self._client.get(url, params=page_params)
+        resp.raise_for_status()
+        return resp.json()
 
     def _parse_sections(self, raw: dict) -> dict[str, str]:
         """
@@ -298,7 +303,11 @@ class APINinjasClient:
             return json.loads(cache_file.read_text(encoding="utf-8"))
 
         log.info(f"  [API Ninjas] Fetching: {common_name}")
-        result = self._fetch_live(common_name)
+        try:
+            result = self._fetch_live(common_name)
+        except httpx.HTTPError as exc:
+            log.warning(f"  [API Ninjas] Transient error for {common_name!r} — not caching, will retry next run: {exc}")
+            return {}
         cache_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         time.sleep(self._DELAY)
         return result
@@ -306,18 +315,18 @@ class APINinjasClient:
     # ── Private ───────────────────────────────────────────────────────────────
 
     def _fetch_live(self, common_name: str) -> dict:
-        """Query the API and return the best-matching animal's characteristics."""
-        try:
-            resp = self._client.get(
-                self.API_URL,
-                params={"name": common_name},
-                headers={"X-Api-Key": self._key},
-            )
-            resp.raise_for_status()
-            animals = resp.json()
-        except httpx.HTTPError as exc:
-            log.warning(f"  [API Ninjas] Request failed for {common_name!r}: {exc}")
-            return {}
+        """
+        Query the API and return the best-matching animal's characteristics.
+        httpx.HTTPError propagates to the caller (fetch()) uncaught — only a
+        confirmed "not found" (empty animals list) returns {} here.
+        """
+        resp = self._client.get(
+            self.API_URL,
+            params={"name": common_name},
+            headers={"X-Api-Key": self._key},
+        )
+        resp.raise_for_status()
+        animals = resp.json()
 
         if not animals:
             log.warning(f"  [API Ninjas] No results for {common_name!r}")
@@ -409,17 +418,27 @@ class IUCNClient:
             return json.loads(cache_file.read_text(encoding="utf-8"))
 
         log.info(f"  [IUCN] Fetching: {scientific_name}")
-        result = self._fetch_live(scientific_name)
+        result, transient = self._fetch_live(scientific_name)
+        if transient:
+            log.warning(f"  [IUCN] Transient error(s) for {scientific_name!r} — not caching, will retry next run")
+            return result
         cache_file.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
         return result
 
     # ── Private ───────────────────────────────────────────────────────────────
 
-    def _fetch_live(self, scientific_name: str) -> dict:
-        name_enc = scientific_name.replace(" ", "%20")
-        token    = self._key
-        result   = {"category": "NE", "population_trend": "Unknown",
-                    "year_assessed": None, "threats": [], "habitats": []}
+    def _fetch_live(self, scientific_name: str) -> tuple[dict, bool]:
+        """
+        Attempt all three legs (assessment/threats/habitats) independently —
+        a transient failure on one leg must not abort the others. Returns
+        (result, transient) where transient=True means at least one leg hit
+        an httpx.HTTPError, so the caller must not cache this partial result.
+        """
+        name_enc  = scientific_name.replace(" ", "%20")
+        token     = self._key
+        result    = {"category": "NE", "population_trend": "Unknown",
+                     "year_assessed": None, "threats": [], "habitats": []}
+        transient = False
 
         # Main assessment
         try:
@@ -436,7 +455,7 @@ class IUCNClient:
             time.sleep(self._DELAY)
         except httpx.HTTPError as exc:
             log.warning(f"  [IUCN] Assessment fetch failed for {scientific_name!r}: {exc}")
-            return result
+            transient = True
 
         # Threats
         try:
@@ -450,6 +469,7 @@ class IUCNClient:
             time.sleep(self._DELAY)
         except httpx.HTTPError as exc:
             log.warning(f"  [IUCN] Threats fetch failed for {scientific_name!r}: {exc}")
+            transient = True
 
         # Habitats
         try:
@@ -463,8 +483,9 @@ class IUCNClient:
             time.sleep(self._DELAY)
         except httpx.HTTPError as exc:
             log.warning(f"  [IUCN] Habitats fetch failed for {scientific_name!r}: {exc}")
+            transient = True
 
-        return result
+        return result, transient
 
     def _mock_stub(self, scientific_name: str) -> dict:
         """Static fallback used when IUCN_API_KEY is absent."""
@@ -560,7 +581,11 @@ class WikipediaClient:
             return json.loads(cache_file.read_text(encoding="utf-8"))
 
         log.info(f"  [Wikipedia] Fetching: {scientific_name}")
-        result = self._fetch_sections(scientific_name) or self._fetch_sections(common_name)
+        try:
+            result = self._fetch_sections(scientific_name) or self._fetch_sections(common_name)
+        except httpx.HTTPError as exc:
+            log.warning(f"  [Wikipedia] Transient error for {scientific_name!r} — not caching, will retry next run: {exc}")
+            return {}
 
         if not result:
             log.warning(f"  [Wikipedia] No article found for {scientific_name!r} or {common_name!r}")
@@ -576,6 +601,7 @@ class WikipediaClient:
         """
         Fetch the full plain-text article extract for title.
         Returns parsed section dict, or None if article not found.
+        httpx.HTTPError propagates to the caller (fetch()) uncaught.
         """
         params = {
             "action":       "query",
@@ -586,14 +612,10 @@ class WikipediaClient:
             "exsectionformat": "plain", # section headers as == Header ==
             "redirects":    True,       # follow redirects (e.g. "Lion" → "Lion (animal)")
         }
-        try:
-            resp = self._client.get(self.API_URL, params=params)
-            resp.raise_for_status()
-            data  = resp.json()
-            pages = data.get("query", {}).get("pages", {})
-        except httpx.HTTPError as exc:
-            log.warning(f"  [Wikipedia] Request failed for {title!r}: {exc}")
-            return None
+        resp = self._client.get(self.API_URL, params=params)
+        resp.raise_for_status()
+        data  = resp.json()
+        pages = data.get("query", {}).get("pages", {})
 
         # MediaWiki returns a dict keyed by page id; -1 = not found
         for page_id, page in pages.items():

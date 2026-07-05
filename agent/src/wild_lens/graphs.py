@@ -18,19 +18,19 @@ START
         │         ▼                                    ▼
         │  unclear_photo_fallback              safety_check
         │         │                                    │
-        │         │                           summarize_history
-        │         │                                    │
-        │         │                           retrieve_information
-        │         │                                    │
-        │         └─────────────► generate_guide_persona
-        │                                    │
-        │                              route_audio
-        │                           ┌────────┴────────┐
-        │                    voice_requested        text only
-        │                           ▼                  ▼
-        │                    generate_audio            END
-        │                           │
-        │                          END
+        │    route_audio                     summarize_history
+        │   ┌─────┴─────┐                               │
+        │   ▼            ▼                    retrieve_information
+        │ generate_audio END                            │
+        │   │                              generate_guide_persona
+        │  END                                           │
+        │                                          route_audio
+        │                                       ┌────────┴────────┐
+        │                                voice_requested        text only
+        │                                       ▼                  ▼
+        │                                generate_audio            END
+        │                                       │
+        │                                      END
         │
         └─[user_message set]──► summarize_history
                                        │
@@ -69,8 +69,9 @@ def route_entry(state: SafariGuideState) -> str:
 
 
 def route_after_analysis(state: SafariGuideState) -> str:
-    """Route based on identification confidence score."""
-    confidence = state.get("identification_result", {}).get("confidence_score", 0.0)
+    """Route based on this turn's confidence score (current_analysis, not the
+    last-known-good identification_result — see node_analyze_image)."""
+    confidence = state.get("current_analysis", {}).get("confidence_score", 0.0)
     return (
         "unclear_photo_fallback" if confidence < MIN_CONFIDENCE
         else "safety_check"
@@ -152,8 +153,17 @@ def build_graph(
         },
     )
 
-    # ── Fallback path: skip retrieval, go straight to persona then audio gate ─
-    g.add_edge("unclear_photo_fallback", "generate_guide_persona")
+    # ── Fallback path: straight to the audio gate — never through persona, so
+    # this final_script (a zero-token retake-photo message) is never overwritten
+    # by a fabricated LLM narration of a low-confidence guess.
+    g.add_conditional_edges(
+        "unclear_photo_fallback",
+        route_audio,
+        {
+            "generate_audio": "generate_audio",
+            END:               END,
+        },
+    )
 
     # ── Happy path: safety → summarise → retrieve → persona ──────────────────
     g.add_edge("safety_check",          "summarize_history")
@@ -193,8 +203,9 @@ def make_turn_input(
         "user_message":    user_message,
         "voice_requested": voice_requested,
         # Per-turn resets — caller should always include these
-        "final_script":    "",
-        "audio_file_path": "",
-        "retrieved_facts": "",
-        "error_message":   "",
+        "final_script":      "",
+        "audio_file_path":   "",
+        "retrieved_facts":   "",
+        "error_message":     "",
+        "current_analysis":  {},
     }
