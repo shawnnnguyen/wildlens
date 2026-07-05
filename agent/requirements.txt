@@ -20,7 +20,7 @@ tavily-python>=0.5.0
 supabase>=2.0.0                      # Supabase Python client
 
 # ── Observability ───────────────────────────────────────────────────────────────
-langfuse>=2.0.0                      # LangChain CallbackHandler for tracing (optional)
+langfuse>=4.0.0                      # OTEL-based SDK: global Langfuse() client + CallbackHandler (optional)
 
 # ── BM25 keyword retriever ─────────────────────────────────────────────────────
 rank-bm25>=0.2.2                     # BM25 keyword retriever for hybrid search

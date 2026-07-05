@@ -12,9 +12,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from safari_guide.graphs import build_graph
-from safari_guide.rag import _NullRetriever, init_rag
-from safari_guide.tts import _EDGE_TTS_AVAILABLE, _GTTS_AVAILABLE
+from wild_lens.graphs import build_graph
+from wild_lens.observability import init_langfuse
+from wild_lens.rag import _NullRetriever, init_rag
+from wild_lens.tts import _EDGE_TTS_AVAILABLE, _GTTS_AVAILABLE
 
 from .audio_store import audio_janitor, ensure_audio_dir
 from .routers import audio, chat, health, sessions
@@ -72,8 +73,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     rag_backend = _detect_rag_backend(retriever)
     log.info("RAG backend: %s", rag_backend)
 
+    # 4b. Init Langfuse (optional; None when LANGFUSE_PUBLIC_KEY/SECRET_KEY unset)
+    langfuse_handler = init_langfuse()
+    log.info("Langfuse tracing: %s", "enabled" if langfuse_handler else "disabled")
+
     # 5. Build compiled graph
-    graph = await asyncio.to_thread(build_graph, llm_vision, llm_text, retriever)
+    graph = await asyncio.to_thread(
+        build_graph, llm_vision, llm_text, retriever, tracing_enabled=bool(langfuse_handler)
+    )
 
     # 6. Detect TTS (import-time flags; no I/O)
     tts_backend = _detect_tts_backend()
@@ -83,6 +90,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.graph = graph
     app.state.rag_backend = rag_backend
     app.state.tts_backend = tts_backend
+    app.state.langfuse_handler = langfuse_handler
     app.state.session_registry = SessionRegistry()
 
     # 9. Ensure audio serving directory exists
