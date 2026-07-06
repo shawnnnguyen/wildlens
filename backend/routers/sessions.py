@@ -32,6 +32,8 @@ def _coerce_identification_history(raw: list[dict]) -> list[WildlifeIdentificati
         try:
             out.append(WildlifeIdentificationOut(
                 species=item.get("species", ""),
+                genus=item.get("genus", ""),
+                species_epithet=item.get("species_epithet", ""),
                 confidence_score=item.get("confidence_score", 0.0),
                 visual_traits=item.get("visual_traits", []),
                 threat_level=item.get("threat_level", "low"),

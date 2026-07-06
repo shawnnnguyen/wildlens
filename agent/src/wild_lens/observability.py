@@ -89,7 +89,11 @@ def invoke_with_tracing(graph, turn_input: dict, config: dict, langfuse_handler)
     client = get_client()
     with client.start_as_current_observation(name="chat_turn", as_type="span"):
         result = graph.invoke(turn_input, config)
-        ident = result.get("identification_result") or {}
+        # current_analysis reflects THIS turn's raw attempt (success, low-confidence,
+        # or error) on a photo turn; it's reset to {} on text-only follow-up turns, so
+        # fall back to identification_result (the last confidently-identified animal)
+        # to keep those turns' trace metadata meaningful too.
+        ident = result.get("current_analysis") or result.get("identification_result") or {}
         client.update_current_span(
             output={"error_message": result.get("error_message") or None},
             metadata={
