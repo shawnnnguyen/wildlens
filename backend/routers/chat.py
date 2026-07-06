@@ -47,6 +47,8 @@ def _build_identification(
     try:
         return WildlifeIdentificationOut(
             species=result.get("species", ""),
+            genus=result.get("genus", ""),
+            species_epithet=result.get("species_epithet", ""),
             confidence_score=result.get("confidence_score", 0.0),
             visual_traits=result.get("visual_traits", []),
             threat_level=result.get("threat_level", "low"),

@@ -16,21 +16,19 @@ START
         │         ┌───────────────┴────────────────────┐
         │         │ conf < MIN_CONFIDENCE              │ conf ≥ MIN_CONFIDENCE
         │         ▼                                    ▼
-        │  unclear_photo_fallback              safety_check
+        │  unclear_photo_fallback              summarize_history
         │         │                                    │
-        │    route_audio                     summarize_history
+        │    route_audio                     retrieve_information
         │   ┌─────┴─────┐                               │
-        │   ▼            ▼                    retrieve_information
+        │   ▼            ▼                  generate_guide_persona
         │ generate_audio END                            │
-        │   │                              generate_guide_persona
-        │  END                                           │
-        │                                          route_audio
-        │                                       ┌────────┴────────┐
-        │                                voice_requested        text only
-        │                                       ▼                  ▼
-        │                                generate_audio            END
-        │                                       │
-        │                                      END
+        │   │                                     route_audio
+        │  END                                ┌────────┴────────┐
+        │                              voice_requested        text only
+        │                                     ▼                  ▼
+        │                              generate_audio            END
+        │                                     │
+        │                                    END
         │
         └─[user_message set]──► summarize_history
                                        │
@@ -51,7 +49,6 @@ from .state import MIN_CONFIDENCE, SafariGuideState
 from .nodes import (
     node_analyze_image,
     node_unclear_photo_fallback,
-    node_safety_check,
     node_retrieve_information,
     node_summarize_history,
     node_generate_guide_persona,
@@ -74,7 +71,7 @@ def route_after_analysis(state: SafariGuideState) -> str:
     confidence = state.get("current_analysis", {}).get("confidence_score", 0.0)
     return (
         "unclear_photo_fallback" if confidence < MIN_CONFIDENCE
-        else "safety_check"
+        else "summarize_history"
     )
 
 
@@ -96,7 +93,7 @@ def build_graph(
 
     llm_vision — multimodal model (Gemini) used only for node_analyze_image.
     llm_text   — text model (DeepSeek) used for summarise + persona nodes.
-    retriever  — hybrid EnsembleRetriever (BM25 + FAISS) from init_rag().
+    retriever  — hybrid EnsembleRetriever (BM25 + Pinecone + Tavily web) from init_rag().
     tracing_enabled — when True, wraps retrieval and TTS with Langfuse
         @observe() spans. Both call plain Python methods (retriever.retrieve(),
         synthesise_audio()) rather than LangChain Runnable.invoke(), so a
@@ -127,7 +124,6 @@ def build_graph(
     # ── Register nodes ────────────────────────────────────────────────────────
     g.add_node("analyze_image",           _analyze)
     g.add_node("unclear_photo_fallback",  node_unclear_photo_fallback)
-    g.add_node("safety_check",            node_safety_check)
     g.add_node("summarize_history",       _summarize)
     g.add_node("retrieve_information",    _retrieve)
     g.add_node("generate_guide_persona",  _persona)
@@ -149,7 +145,7 @@ def build_graph(
         route_after_analysis,
         {
             "unclear_photo_fallback": "unclear_photo_fallback",
-            "safety_check":           "safety_check",
+            "summarize_history":      "summarize_history",
         },
     )
 
@@ -165,8 +161,7 @@ def build_graph(
         },
     )
 
-    # ── Happy path: safety → summarise → retrieve → persona ──────────────────
-    g.add_edge("safety_check",          "summarize_history")
+    # ── Happy path: summarise → retrieve → persona ────────────────────────────
     g.add_edge("summarize_history",     "retrieve_information")
     g.add_edge("retrieve_information",  "generate_guide_persona")
 

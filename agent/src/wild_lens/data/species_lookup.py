@@ -2,7 +2,7 @@
 Lookup helper over the curated `species_list.json` ground-truth data.
 
 Used to cross-check/canonicalize Gemini's freeform, live `species` output
-against the handcrafted species list — see `node_safety_check`'s ground-truth
+against the handcrafted species list — see `node_analyze_image`'s ground-truth
 threat_level escalation and `node_retrieve_information`'s species-filtered
 retrieval, both of which need to match Gemini's output (e.g. "African lion
 (Panthera leo)") against the canonical `common_name` (e.g. "African Lion")

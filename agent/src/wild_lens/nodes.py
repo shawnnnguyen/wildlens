@@ -9,8 +9,7 @@ Node inventory
 ──────────────
 node_analyze_image         multimodal Gemini vision call → WildlifeIdentification
 node_unclear_photo_fallback polite retry prompt when confidence < MIN_CONFIDENCE
-node_safety_check          injects safety_warning for high-threat species
-node_retrieve_information  FAISS similarity search → retrieved_facts
+node_retrieve_information  hybrid RAG search → retrieved_facts
 node_summarize_history     compresses old chat_history → conversation_summary
 node_generate_guide_persona Baako persona script generation
 node_generate_audio        TTS synthesis (conditional on voice_requested)
@@ -19,6 +18,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from pathlib import Path
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -38,15 +38,13 @@ _THREAT_RANK = {"low": 0, "medium": 1, "high": 2}
 
 # ── Baako persona (injected first in every generation call) ───────────────────
 _BAAKO_SYSTEM = SystemMessage(content=(
-    "You are Baako — an energetic, rugged, and deeply passionate African safari guide "
-    "with 20 years of experience across the Serengeti, Maasai Mara, and Okavango Delta. "
-    "You speak with infectious enthusiasm, weaving scientific accuracy with vivid sensory "
-    "descriptions, local Maasai lore, and safety advice delivered as gripping stories. "
+    "You are Baako — a knowledgeable and enthusiastic African safari guide with 20 years "
+    "of experience across the Serengeti, Maasai Mara, and Okavango Delta. "
+    "You speak with genuine warmth and respect for the wildlife you describe, grounding "
+    "your enthusiasm in scientific accuracy rather than theatrics. "
     "Your scripts are written for audio delivery: conversational tone, punchy sentences, "
     "no bullet points, no markdown formatting whatsoever. "
-    "Aim for 140–220 words (60–90 seconds spoken at a natural pace). "
-    "When a SAFETY ALERT is given, open with it in a calm but urgent voice before "
-    "transitioning into the wildlife commentary."
+    "Aim for 140–220 words (60–90 seconds spoken at a natural pace)."
 ))
 
 
@@ -85,6 +83,25 @@ def _to_data_uri(image_path: str) -> str:
     return f"data:{mime};base64,{encoded}"
 
 
+_BINOMIAL_RE = re.compile(r"\(([A-Z][a-z]+)\s+([a-z-]+)")
+
+
+def parse_binomial(species: str) -> tuple[str, str]:
+    """
+    Extract (genus, species_epithet) from a "Common Name (Genus species)" string.
+
+    Derived deterministically from Gemini's existing `species` output rather than
+    asking for genus/epithet as separate structured-output fields — avoids a second
+    LLM-populated field that could drift from (or fail validation independently of)
+    the scientific name already embedded in `species`.
+
+    Returns ("", "") if no parenthesised binomial is present (e.g. "unknown" on
+    an analysis error/low-confidence stub).
+    """
+    match = _BINOMIAL_RE.search(species or "")
+    return (match.group(1), match.group(2)) if match else ("", "")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # NODE 1 — Analyse image
 # ══════════════════════════════════════════════════════════════════════════════
@@ -103,13 +120,19 @@ def node_analyze_image(
 
     identification_history accumulates (via operator.add) on every successful
     analysis regardless of confidence — unchanged from prior behavior.
-    identification_result (last-known-good, read by safety_check/retrieval/
-    persona) is only updated when confidence_score >= MIN_CONFIDENCE.
+    identification_result (last-known-good, read by retrieval/persona) is
+    only updated when confidence_score >= MIN_CONFIDENCE.
 
     Gemini's live threat_level is escalated (never downgraded) against
     species_list.json's curated ground truth here — before identification_result
-    AND identification_history are built — so both stay consistent with the
-    safety warning that may fire this same turn (see species_lookup.py).
+    AND identification_history are built — so both stay consistent (see
+    species_lookup.py). threat_level is exposed to callers (e.g. the API
+    response) for their own use; the agent no longer narrates a safety
+    warning itself.
+
+    genus/species_epithet are derived deterministically from Gemini's
+    `species` string via parse_binomial() rather than requested as separate
+    structured-output fields.
     """
     log.info("▶ NODE  analyze_image")
     try:
@@ -136,6 +159,7 @@ def node_analyze_image(
         )
 
         ident = result.model_dump()
+        ident["genus"], ident["species_epithet"] = parse_binomial(ident["species"])
         curated_threat = ground_truth_threat_level(ident["species"])
         if curated_threat and _THREAT_RANK.get(curated_threat, 0) > _THREAT_RANK.get(ident["threat_level"], 0):
             log.warning(
@@ -203,35 +227,7 @@ def node_unclear_photo_fallback(state: SafariGuideState) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 3 — Safety check
-# ══════════════════════════════════════════════════════════════════════════════
-
-def node_safety_check(state: SafariGuideState) -> dict:
-    """
-    Injects a safety_warning key into identification_result for high-threat species.
-    Returns {} for medium/low threat — a confirmed LangGraph no-op.
-    Always returns a new dict copy; never mutates state in place.
-    """
-    log.info("▶ NODE  safety_check")
-    ident = state.get("identification_result", {})
-
-    if ident.get("threat_level", "low") != "high":
-        log.info("   → Non-high threat; no safety warning injected.")
-        return {}
-
-    species = ident.get("species", "this animal")
-    warning = (
-        f"⚠ SAFETY ALERT — {species.upper()} NEARBY! "
-        "Stay inside the vehicle, keep all windows raised, "
-        "and make no sudden movements or loud sounds. "
-        "Alert your ranger immediately. "
-    )
-    log.warning("   → HIGH THREAT: %s", species)
-    return {"identification_result": {**ident, "safety_warning": warning}}
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# NODE 4 — RAG retrieval
+# NODE 3 — RAG retrieval
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_retrieve_information(
@@ -239,9 +235,13 @@ def node_retrieve_information(
     retriever: BaseRetriever,
 ) -> dict:
     """
-    Hybrid BM25 + semantic retrieval for verified guidebook facts.
+    Hybrid BM25 + semantic + web retrieval for verified guidebook facts.
     Query blends species name + user_message for context-aware retrieval
-    on both photo turns and text follow-up turns.
+    on text follow-up turns. On a fresh photo identification (no follow_up
+    yet), the query is biased toward diet/circadian-rhythm topics instead of
+    just the species name, since that's the biographical info the persona
+    node is expected to lead with and the curated corpus has no dedicated
+    field for it — see node_generate_guide_persona.
     """
     log.info("▶ NODE  retrieve_information")
     species     = state.get("identification_result", {}).get("species", "")
@@ -250,7 +250,11 @@ def node_retrieve_information(
     # back to the naive split for genuinely unlisted/novel species — see #10).
     common_name = (canonical_common_name(species) if species else None) or species.split("(")[0].strip()
     follow_up   = state.get("user_message", "")
-    query       = f"{common_name} {follow_up}".strip() or "safari wildlife"
+    if follow_up:
+        query = f"{common_name} {follow_up}".strip()
+    else:
+        query = f"{common_name} diet feeding behavior circadian rhythm daily activity pattern".strip()
+    query = query or "safari wildlife"
 
     if isinstance(retriever, _EnsembleRetriever):
         docs = retriever.retrieve(query, species=common_name or None)
@@ -298,7 +302,7 @@ def _strip_synthetic(messages: list) -> list:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 5 — Summarise history  (long-range memory management)
+# NODE 4 — Summarise history  (long-range memory management)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_summarize_history(
@@ -361,7 +365,7 @@ def node_summarize_history(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 6 — Generate guide persona script
+# NODE 5 — Generate guide persona script
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_generate_guide_persona(
@@ -385,9 +389,12 @@ def node_generate_guide_persona(
 
     ident        = state.get("identification_result", {})
     species      = ident.get("species", "this remarkable creature")
+    genus        = ident.get("genus", "")
+    species_epithet = ident.get("species_epithet", "")
     traits       = ident.get("visual_traits", [])
-    safety_alert = ident.get("safety_warning", "")
-    facts        = state.get("retrieved_facts", "No additional guidebook facts retrieved.")
+    # `.get(key, default)` would never fall back here — retrieve_information always
+    # sets the key, even to "" when nothing was found — so use `or` instead.
+    facts        = state.get("retrieved_facts") or "No additional guidebook facts retrieved."
     follow_up    = state.get("user_message", "")
     summary      = state.get("conversation_summary", "")
     history      = state.get("chat_history", [])
@@ -435,16 +442,23 @@ def node_generate_guide_persona(
             "use the session memory and animals list above."
         ))
     else:
-        safety_prefix = f"SAFETY ALERT — OPEN WITH THIS:\n{safety_alert}\n\n" if safety_alert else ""
-        trait_line    = ", ".join(traits) if traits else "its distinctive features"
+        trait_line  = ", ".join(traits) if traits else "its distinctive features"
+        binomial_line = (
+            f"Genus: {genus}. Species: {species_epithet}.\n"
+            if genus and species_epithet else ""
+        )
         task = HumanMessage(content=(
-            f"{safety_prefix}"
             f"You have just spotted a {species}! "
+            f"{binomial_line}"
             f"Observable traits: {trait_line}.\n\n"
             f"Verified facts (Guidebook = vetted internal data; Web = live search, "
-            f"supplementary only — prefer Guidebook on conflict, especially for "
-            f"safety/danger information):\n{facts}{animals_digest}\n\n"
-            "Generate a captivating audio tour-guide script as Baako."
+            f"supplementary only — prefer Guidebook on conflict):\n{facts}{animals_digest}\n\n"
+            "Generate an audio tour-guide script as Baako introducing this animal. "
+            "Clearly state its common name, genus, and species. Then highlight its "
+            "circadian rhythm (when it's active) and its diet, drawing only from the "
+            "facts above. If the facts above don't cover its circadian rhythm or diet, "
+            "say so briefly and respectfully — apologize that this specific detail "
+            "isn't available yet rather than guessing or inventing it."
         ))
 
     messages  = [_BAAKO_SYSTEM] + context_msgs + [task]
@@ -459,7 +473,7 @@ def node_generate_guide_persona(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# NODE 7 — Generate audio  (conditional on voice_requested)
+# NODE 6 — Generate audio  (conditional on voice_requested)
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_generate_audio(state: SafariGuideState) -> dict:

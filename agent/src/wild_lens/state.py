@@ -70,8 +70,8 @@ class SafariGuideState(TypedDict):
     # the LLM, keeping its cost bounded instead of growing with session length.
 
     # ── Current-animal pipeline data (overwritten each photo turn) ───────────
-    identification_result:  dict  # keys: species, confidence_score, visual_traits,
-                                  #       threat_level, habitat_context, safety_warning*
+    identification_result:  dict  # keys: species, genus, species_epithet, confidence_score,
+                                  #       visual_traits, threat_level, habitat_context
 
 
 # ── Structured output schema ──────────────────────────────────────────────────
@@ -80,7 +80,7 @@ class WildlifeIdentification(BaseModel):
     """
     Contract enforced by llm.with_structured_output() via Gemini function-calling.
     Literal on threat_level prevents Gemini returning "High!" and silently
-    bypassing the == "high" check in node_safety_check.
+    bypassing the curated-ground-truth escalation check in node_analyze_image.
     """
 
     species: str = Field(

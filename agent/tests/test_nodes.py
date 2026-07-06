@@ -26,8 +26,8 @@ from wild_lens.nodes import (
     node_retrieve_information,
     node_summarize_history,
     node_unclear_photo_fallback,
-    node_safety_check,
     node_generate_audio,
+    parse_binomial,
 )
 
 
@@ -223,31 +223,31 @@ def test_fallback_mentions_confidence():
     assert "45%" in result["final_script"]
 
 
-# ── node_safety_check ─────────────────────────────────────────────────────────
+# ── parse_binomial ────────────────────────────────────────────────────────────
 
-def test_safety_check_noop_for_low_threat():
-    state = _base_state(
-        identification_result={"species": "Plains Zebra", "threat_level": "low"}
+def test_parse_binomial_extracts_genus_and_epithet():
+    assert parse_binomial("African Lion (Panthera leo)") == ("Panthera", "leo")
+
+
+def test_parse_binomial_handles_missing_parentheses():
+    assert parse_binomial("unknown") == ("", "")
+
+
+def test_parse_binomial_handles_empty_string():
+    assert parse_binomial("") == ("", "")
+
+
+def test_analyze_image_sets_genus_and_species_epithet():
+    ident = WildlifeIdentification(
+        species="African Lion (Panthera leo)", confidence_score=0.9,
+        visual_traits=["mane"], threat_level="high", habitat_context="savanna",
     )
-    result = node_safety_check(state)
-    assert result == {}, "Must return empty dict (no-op) for non-high threat"
-
-
-def test_safety_check_injects_warning_for_high_threat():
-    state = _base_state(
-        identification_result={"species": "African Lion (Panthera leo)", "threat_level": "high"}
-    )
-    result = node_safety_check(state)
-    assert "safety_warning" in result["identification_result"]
-    assert "SAFETY ALERT" in result["identification_result"]["safety_warning"]
-
-
-def test_safety_check_does_not_mutate_state():
-    original = {"species": "Hippo", "threat_level": "high"}
-    state = _base_state(identification_result=original)
-    node_safety_check(state)
-    # original dict must not have been mutated
-    assert "safety_warning" not in original
+    llm = _mock_llm_returning(ident)
+    state = _base_state(image_path="lion.jpg")
+    with patch("wild_lens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+        result = node_analyze_image(state, llm)
+    assert result["identification_result"]["genus"] == "Panthera"
+    assert result["identification_result"]["species_epithet"] == "leo"
 
 
 # ── node_generate_audio ───────────────────────────────────────────────────────
@@ -332,6 +332,60 @@ def test_persona_recent_messages_bounded_over_consecutive_low_confidence_turns()
     # context_msgs = [] (no summary) + recent + [task]; the persona system
     # message is always first, the task message always last.
     assert sent_messages[1:1 + len(expected_recent)] == expected_recent
+
+
+# ── node_generate_guide_persona: photo-turn task content ─────────────────────
+
+def test_persona_photo_turn_has_no_safety_alert_text():
+    """Safety warnings are no longer narrated in the response (dropped per
+    product decision — camera-phase warnings are handled by the frontend)."""
+    state = _base_state(
+        identification_result={
+            "species": "African Lion (Panthera leo)", "threat_level": "high",
+            "genus": "Panthera", "species_epithet": "leo",
+        },
+    )
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="A lion at rest.")
+    node_generate_guide_persona(state, llm)
+
+    task_message = llm.invoke.call_args[0][0][-1]
+    assert "SAFETY ALERT" not in task_message.content
+
+
+def test_persona_photo_turn_instructs_genus_species_diet_circadian():
+    state = _base_state(
+        identification_result={
+            "species": "African Lion (Panthera leo)", "threat_level": "high",
+            "genus": "Panthera", "species_epithet": "leo",
+        },
+    )
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="A lion at rest.")
+    node_generate_guide_persona(state, llm)
+
+    task_message = llm.invoke.call_args[0][0][-1]
+    content = task_message.content
+    assert "Genus: Panthera" in content
+    assert "Species: leo" in content
+    assert "circadian rhythm" in content
+    assert "diet" in content
+    assert "apologize" in content  # graceful-missing-data instruction present
+
+
+def test_persona_facts_fallback_fires_on_empty_string():
+    """retrieve_information always sets retrieved_facts (even to ""), so the
+    fallback text must be reachable via `or`, not `.get(key, default)`."""
+    state = _base_state(
+        identification_result={"species": "Zebra", "threat_level": "low"},
+        retrieved_facts="",
+    )
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="A zebra grazes.")
+    node_generate_guide_persona(state, llm)
+
+    task_message = llm.invoke.call_args[0][0][-1]
+    assert "No additional guidebook facts retrieved." in task_message.content
 
 
 # ── node_summarize_history: incremental summarized_upto (bug #3) ────────────
