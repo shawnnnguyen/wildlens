@@ -34,13 +34,15 @@ import httpx
 log = logging.getLogger("safari_guide.data.lila")
 
 # Snapshot Serengeti v2.1 — COCO-format metadata
-# Images hosted on Azure blob storage; URLs embedded in metadata JSON
+# LILA BC migrated off lilablobssc.blob.core.windows.net (now 403s); dataset is
+# hosted on Google Cloud Storage as of this writing. The combined metadata file
+# is now zip-compressed (unzipped it's ~500 MB of JSON).
 SNAPSHOT_SERENGETI_METADATA_URL = (
-    "https://lilablobssc.blob.core.windows.net/"
-    "snapshotserengeti-v-2-0/SnapshotSerengeti_S1-S11_v2.1.json"
+    "https://storage.googleapis.com/public-datasets-lila/"
+    "snapshotserengeti-v-2-0/SnapshotSerengeti_S1-11_v2_1.json.zip"
 )
 SNAPSHOT_SERENGETI_IMAGE_BASE = (
-    "https://lilablobssc.blob.core.windows.net/snapshotserengeti-v-2-0/"
+    "https://storage.googleapis.com/public-datasets-lila/snapshotserengeti-unzipped/"
 )
 
 # iNaturalist Camera Traps (broader species coverage)
@@ -182,6 +184,17 @@ class LILADownloader:
             return {}
 
         import io
+
+        if self._metadata_url.endswith(".zip"):
+            import zipfile
+            with zipfile.ZipFile(io.BytesIO(raw_bytes)) as zf:
+                raw_bytes = zf.read(zf.namelist()[0])
+
+        # The dataset embeds non-standard NaN/Infinity literals (e.g. annotation
+        # "count"/"standing" fields) which are invalid JSON and reject ijson —
+        # neutralize them since we never read those fields.
+        import re
+        raw_bytes = re.sub(rb"\b(NaN|-?Infinity)\b", b"null", raw_bytes)
 
         # Pass 1: categories
         for item in ijson.items(io.BytesIO(raw_bytes), "categories.item"):

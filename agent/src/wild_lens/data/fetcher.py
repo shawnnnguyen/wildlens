@@ -172,7 +172,11 @@ class EOLClient:
         """
         sections: dict[str, list[str]] = {}
 
-        for data_obj in raw.get("dataObjects", []):
+        # EOL Pages API nests dataObjects under taxonConcept; fall back to
+        # top level in case older/alternate responses are ever flat.
+        data_objects = raw.get("taxonConcept", raw).get("dataObjects", [])
+
+        for data_obj in data_objects:
             if data_obj.get("dataType", "").lower() != "text":
                 continue
             if data_obj.get("language", "en") not in ("en", "eng", ""):
@@ -793,8 +797,10 @@ class EOLImageFetcher:
         time.sleep(self._DELAY)
 
         # Step 3: filter StillImage dataObjects
+        # EOL Pages API nests dataObjects under taxonConcept; fall back to
+        # top level in case older/alternate responses are ever flat.
         images: list[dict] = []
-        for obj in data.get("dataObjects", []):
+        for obj in data.get("taxonConcept", data).get("dataObjects", []):
             data_type = obj.get("dataType", "")
             if data_type != _EOL_STILL_IMAGE_TYPE:
                 continue

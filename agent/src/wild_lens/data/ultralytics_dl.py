@@ -96,10 +96,12 @@ class UltralyticsDownloader:
             log.info(f"[Ultralytics] Using cached zip at {zip_path}")
 
         log.info("[Ultralytics] Extracting …")
-        extract_dir = self._work_dir / "african-wildlife"
-        if not extract_dir.exists():
+        # The zip has no wrapping "african-wildlife/" directory — it extracts
+        # images/ and labels/ straight into work_dir.
+        extract_dir = self._work_dir
+        if not (extract_dir / "images").exists():
             with zipfile.ZipFile(zip_path, "r") as zf:
-                zf.extractall(self._work_dir)
+                zf.extractall(extract_dir)
 
         results: dict[str, int] = {}
 
@@ -130,11 +132,13 @@ class UltralyticsDownloader:
                 )
                 results[common_name] = results.get(common_name, 0) + 1
 
-        # Cleanup extracted directory (zip kept for re-runs)
+        # Cleanup extracted images/labels (zip kept for re-runs)
         import shutil
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
-            log.info("[Ultralytics] Extracted files cleaned up")
+        for sub in ("images", "labels"):
+            sub_dir = extract_dir / sub
+            if sub_dir.exists():
+                shutil.rmtree(sub_dir)
+        log.info("[Ultralytics] Extracted files cleaned up")
 
         for name, count in results.items():
             log.info(f"[Ultralytics] {name}: {count} images uploaded")
