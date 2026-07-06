@@ -141,14 +141,16 @@ This is a **LangGraph-based multi-turn conversational agent** — a "Digital Saf
 ```
 START → route_entry
   ├─[image_path set] → analyze_image
-  │     ├─[conf < 0.60] → unclear_photo_fallback → generate_guide_persona
-  │     └─[conf ≥ 0.60] → safety_check → summarize_history → retrieve_information → generate_guide_persona
-  └─[user_message set] → summarize_history → retrieve_information → generate_guide_persona
+  │     ├─[conf < 0.60] → unclear_photo_fallback → route_audio
+  │     └─[conf ≥ 0.60] → summarize_history → retrieve_information → generate_guide_persona → route_audio
+  └─[user_message set] → summarize_history → retrieve_information → generate_guide_persona → route_audio
                                                                              │
                                                                        route_audio
                                                                   ├─[voice_requested] → generate_audio → END
                                                                   └─[text only] → END
 ```
+
+There is no dedicated safety-warning node — `threat_level` is still computed (and escalated against curated ground truth) in `node_analyze_image` and exposed to API consumers, but the agent no longer narrates a safety alert in `final_script`; that's left to the frontend's camera-capture UI.
 
 `final_script` is **always written** before `END` — including the fallback path. `audio_file_path` is only written when `voice_requested=True`.
 

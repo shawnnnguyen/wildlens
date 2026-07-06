@@ -16,7 +16,7 @@ from langchain_community.retrievers import BM25Retriever
 from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from pydantic import ConfigDict
+from pydantic import ConfigDict, PrivateAttr
 
 from .backends import _TavilyRetriever
 
@@ -62,9 +62,24 @@ def _bm25_search(bm25: BM25Retriever, query: str, n: int, species: str) -> list[
     would race. `vectorizer.get_top_n` takes `n` as a stateless, explicit
     argument instead — over-retrieve here and post-filter without ever
     touching shared instance state.
+
+    `preprocess_func`/`vectorizer`/`docs` are undocumented `BM25Retriever`
+    internals with no public equivalent for this over-retrieve pattern — if a
+    `langchain_community` upgrade renames/removes them, fall back to the
+    public `.invoke()` API (capped at `bm25.k`, so over-retrieval for
+    species-filtering is lost on this path) rather than crashing retrieval
+    entirely. See test_bm25_internal_api_still_present, a canary test that
+    fails loudly on such a dependency bump.
     """
-    tokens = bm25.preprocess_func(query)
-    docs   = bm25.vectorizer.get_top_n(tokens, bm25.docs, n=n)
+    try:
+        tokens = bm25.preprocess_func(query)
+        docs   = bm25.vectorizer.get_top_n(tokens, bm25.docs, n=n)
+    except AttributeError as exc:
+        log.warning(
+            "BM25Retriever internals changed (%s) — likely a langchain_community "
+            "version bump. Falling back to the public .invoke() API.", exc,
+        )
+        docs = bm25.invoke(query)
     return [d for d in docs if d.metadata.get("species") == species]
 
 
@@ -79,6 +94,19 @@ class _EnsembleRetriever(BaseRetriever):
     rerank_threshold: float = 0.0
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # Lazily created and reused across retrieve() calls — this retriever is a
+    # long-lived singleton (see init_rag()'s startup call), so spinning up a
+    # new ThreadPoolExecutor per call would waste thread-spawn overhead on
+    # every single request. No explicit shutdown(): it lives as long as the
+    # process, matching how the Pinecone/Supabase clients elsewhere in this
+    # codebase are also never explicitly torn down.
+    _executor: ThreadPoolExecutor | None = PrivateAttr(default=None)
+
+    def _get_executor(self) -> ThreadPoolExecutor:
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=len(self.retrievers))
+        return self._executor
 
     def _fused_retrieve(
         self,
@@ -113,9 +141,9 @@ class _EnsembleRetriever(BaseRetriever):
         # order, NOT completion order, so the "first retriever wins the stored
         # Document on collision" tie-break below stays deterministic regardless
         # of which network call happens to return first.
-        with ThreadPoolExecutor(max_workers=len(self.retrievers)) as pool:
-            futures = [pool.submit(_run, retriever) for retriever in self.retrievers]
-            all_docs = [future.result() for future in futures]
+        pool = self._get_executor()
+        futures = [pool.submit(_run, retriever) for retriever in self.retrievers]
+        all_docs = [future.result() for future in futures]
 
         for docs, weight in zip(all_docs, self.weights):
             for rank, doc in enumerate(docs):

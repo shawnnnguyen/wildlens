@@ -15,7 +15,9 @@ venv/
 # Generated at runtime (agent/)
 agent/faiss_wildlife_index/
 agent/audio_output/
-agent/data/cache/
+
+# Generated at runtime (data ingestion cache, repo root)
+data/cache/
 
 # Generated at runtime (backend/)
 backend/static/audio/

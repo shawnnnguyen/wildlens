@@ -8,6 +8,8 @@ from pydantic import BaseModel
 
 class WildlifeIdentificationOut(BaseModel):
     species: str
+    genus: str
+    species_epithet: str
     confidence_score: float
     visual_traits: list[str]
     threat_level: Literal["low", "medium", "high"]
