@@ -50,7 +50,7 @@ Copy `.env.example` to `.env` and fill in the required keys:
 
 ```
 # Required — core LLMs
-GOOGLE_API_KEY=...           # Gemini 2.0 Flash (vision/multimodal)
+GOOGLE_API_KEY=...           # Gemini (vision/multimodal) — model name set by GEMINI_VISION_MODEL, see .env.example
 DEEPSEEK_API_KEY=...         # DeepSeek Chat (text generation via OpenAI-compatible API)
 
 # Required — vector + document store
@@ -133,7 +133,7 @@ This is a **LangGraph-based multi-turn conversational agent** — a "Digital Saf
 
 `build_graph(llm_vision, llm_text, retriever)` in `agent/src/wild_lens/graphs.py` compiles a single `StateGraph` with a `MemorySaver` checkpointer. The caller passes a `thread_id`; all prior session state is restored automatically between turns.
 
-- `llm_vision` — Gemini 2.0 Flash; used only in `node_analyze_image` for multimodal structured output
+- `llm_vision` — Gemini (model set by `GEMINI_VISION_MODEL` env var, see `.env.example`); used only in `node_analyze_image` for multimodal structured output
 - `llm_text` — DeepSeek Chat (via OpenAI-compatible API); used in `node_summarize_history` and `node_generate_guide_persona`
 
 ### Graph topology (single compiled graph)
