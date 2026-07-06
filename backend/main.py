@@ -24,6 +24,8 @@ from .session_registry import SessionRegistry
 
 load_dotenv()
 
+logging.basicConfig(level=logging.INFO)
+
 log = logging.getLogger("backend")
 
 _REQUIRED_ENV_VARS = ["GOOGLE_API_KEY", "DEEPSEEK_API_KEY"]
@@ -60,7 +62,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from langchain_google_genai import ChatGoogleGenerativeAI
     from langchain_openai import ChatOpenAI
 
-    llm_vision = ChatGoogleGenerativeAI(model="gemini-2.0-flash", temperature=0.35)
+    llm_vision = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.35)
     llm_text = ChatOpenAI(
         model="deepseek-chat",
         api_key=os.environ["DEEPSEEK_API_KEY"],
