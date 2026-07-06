@@ -170,6 +170,98 @@ def test_retrieve_information_canonicalizes_species_name():
     assert kwargs["species"] == "African Lion"
 
 
+# ── Knowledge Base Enrichment (enqueued from node_retrieve_information) ──────
+
+def test_retrieve_information_enriches_web_docs_only():
+    """Web docs returned by retrieval get handed to enrich_async; curated
+    guidebook docs (any other source) must never be enriched."""
+    from langchain_core.documents import Document
+    from wild_lens.rag import _EnsembleRetriever
+
+    web_doc = Document(
+        page_content="Lions are most active at dawn and dusk.",
+        metadata={"source": "web", "url": "http://example.com/lion-facts", "title": "Lion Facts"},
+    )
+    guidebook_doc = Document(
+        page_content="Lions live in prides.",
+        metadata={"source": "eol", "species": "African Lion"},
+    )
+
+    retriever = _EnsembleRetriever(retrievers=[], weights=[])
+    state = _base_state(identification_result={"species": "African Lion (Panthera leo)"})
+
+    with (
+        patch.object(_EnsembleRetriever, "retrieve", return_value=[web_doc, guidebook_doc]),
+        patch.object(_EnsembleRetriever, "enrich_async") as mock_enrich,
+    ):
+        node_retrieve_information(state, retriever)
+
+    mock_enrich.assert_called_once()
+    _, kwargs = mock_enrich.call_args
+    assert kwargs["species"] == "African Lion"
+    assert kwargs["content"] == web_doc.page_content
+    assert kwargs["source_url"] == "http://example.com/lion-facts"
+
+
+def test_enqueue_enrichment_gives_each_web_doc_a_distinct_section():
+    """Multiple web docs from the same query must not share one section slug —
+    upsert_document's delete-then-insert would make each write clobber the last,
+    keeping only the final doc instead of all of them."""
+    from langchain_core.documents import Document
+    from wild_lens.nodes import _enqueue_enrichment
+    from wild_lens.rag import _EnsembleRetriever
+
+    docs = [
+        Document(page_content=f"fact {i}", metadata={"source": "web", "url": f"http://x/{i}"})
+        for i in range(3)
+    ]
+    retriever = _EnsembleRetriever(retrievers=[], weights=[])
+    with patch.object(_EnsembleRetriever, "enrich_async") as mock_enrich:
+        _enqueue_enrichment(retriever, "African Lion", "lion diet", docs)
+
+    sections = [call.kwargs["section"] for call in mock_enrich.call_args_list]
+    assert len(sections) == 3
+    assert len(set(sections)) == 3
+
+
+def test_enqueue_enrichment_section_stable_across_calls():
+    """Same URL must map to the same section every time it's enriched (sha1,
+    not builtin hash()) — PYTHONHASHSEED randomizes hash() per process, which
+    would otherwise turn a repeat scrape of the same page into a brand new
+    row instead of an idempotent overwrite of the old one."""
+    from langchain_core.documents import Document
+    from wild_lens.nodes import _enqueue_enrichment
+    from wild_lens.rag import _EnsembleRetriever
+
+    doc = Document(page_content="fact", metadata={"source": "web", "url": "http://x/1"})
+    retriever = _EnsembleRetriever(retrievers=[], weights=[])
+
+    with patch.object(_EnsembleRetriever, "enrich_async") as mock_enrich:
+        _enqueue_enrichment(retriever, "African Lion", "lion diet", [doc])
+        _enqueue_enrichment(retriever, "African Lion", "lion diet", [doc])
+
+    sections = [call.kwargs["section"] for call in mock_enrich.call_args_list]
+    assert sections[0] == sections[1]
+
+
+def test_format_fact_labels_web_enriched_as_web_not_guidebook():
+    """A past Tavily result resurfacing via the BM25 rebuild or the web_cache
+    Pinecone namespace (source='web_enriched') must still render as Web, never
+    Guidebook — the persona prompt is told to trust Guidebook over Web on
+    safety conflicts, so mislabeling here would promote unverified scraped
+    text to vetted status."""
+    from langchain_core.documents import Document
+    from wild_lens.nodes import _format_fact
+
+    doc = Document(
+        page_content="Lions sleep up to 20 hours a day.",
+        metadata={"source": "web_enriched", "species": "African Lion", "section": "diet__abc123"},
+    )
+    formatted = _format_fact(doc)
+    assert formatted.startswith("[Source: Web")
+    assert "Guidebook" not in formatted.split("]")[0]
+
+
 # ── _to_data_uri ──────────────────────────────────────────────────────────────
 
 def test_to_data_uri_rejects_bad_extension(tmp_path):
