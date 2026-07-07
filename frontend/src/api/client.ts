@@ -36,9 +36,15 @@ export interface PostChatParams {
   threadId: string;
   message?: string;
   image?: File;
+  sessionSecret?: string; // required once a session already exists — see useSessions.ts
 }
 
-export async function postChat({ threadId, message, image }: PostChatParams): Promise<ChatResponse> {
+export async function postChat({
+  threadId,
+  message,
+  image,
+  sessionSecret,
+}: PostChatParams): Promise<ChatResponse> {
   const form = new FormData();
   form.set("thread_id", threadId);
   if (message) form.set("message", message);
@@ -47,6 +53,7 @@ export async function postChat({ threadId, message, image }: PostChatParams): Pr
   const response = await fetch(`${API_BASE_URL}/api/chat`, {
     method: "POST",
     body: form,
+    headers: sessionSecret ? { "X-Session-Secret": sessionSecret } : undefined,
   });
 
   if (!response.ok) {

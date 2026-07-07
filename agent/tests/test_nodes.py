@@ -650,3 +650,30 @@ def test_summarize_history_first_call_matches_full_resend_behavior():
     for i in range(14):
         assert f"msg {i}" in sent_prompt
     assert result["summarized_upto"] == 14
+
+
+# ── Retry + graceful degradation on persistent LLM failure (Phase 1 hardening) ──
+
+def test_summarize_history_llm_failure_retries_then_noop():
+    history = [AIMessage(content=f"msg {i}") for i in range(20)]
+    state = _base_state(chat_history=history, summarized_upto=0)
+    llm = MagicMock()
+    llm.invoke.side_effect = RuntimeError("api down")
+
+    result = node_summarize_history(state, llm)
+
+    assert result == {}  # no-op: summarized_upto/conversation_summary untouched
+    assert llm.invoke.call_count == 3  # tenacity's stop_after_attempt(3)
+
+
+def test_persona_llm_failure_retries_then_returns_apology_script():
+    state = _base_state(identification_result={"species": "Zebra", "threat_level": "low"})
+    llm = MagicMock()
+    llm.invoke.side_effect = RuntimeError("api down")
+
+    result = node_generate_guide_persona(state, llm)
+
+    assert llm.invoke.call_count == 3  # tenacity's stop_after_attempt(3)
+    assert result["final_script"]  # contract: always non-empty, even on failure
+    assert result["error_message"] == "api down"
+    assert len(result["chat_history"]) == 2

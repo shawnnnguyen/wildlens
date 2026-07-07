@@ -9,7 +9,7 @@ function uid(): string {
 }
 
 function emptySession(): Session {
-  return { id: NEW_SESSION_ID, title: "New identification", subtitle: "", thumbnail: "", species: null, messages: [] };
+  return { id: NEW_SESSION_ID, secret: "", title: "New identification", subtitle: "", thumbnail: "", species: null, messages: [] };
 }
 
 function toSpeciesCard(id: WildlifeIdentification, description: string): SpeciesCard {
@@ -59,6 +59,7 @@ export function useSessions() {
       setSessions((prev) => [
         {
           id: sid,
+          secret: "",
           title: "Identifying…",
           subtitle: "Just now",
           thumbnail: imageUrl,
@@ -73,11 +74,18 @@ export function useSessions() {
 
       try {
         const response = await postChat({ threadId: sid, image: file });
+        // First call for this thread_id — the backend hands back a capability
+        // token that every later call on this session must present (see
+        // client.ts/postChat). Not accounts/login — the app stays single-use
+        // and anonymous; this just stops anyone who learns the thread_id from
+        // reading or continuing someone else's session.
+        const secret = response.session_secret ?? "";
 
         if (response.identification) {
           const card = toSpeciesCard(response.identification, response.final_script);
           updateSession(sid, (s) => ({
             ...s,
+            secret,
             title: card.common,
             subtitle: card.scientific || "Just now",
             species: card,
@@ -91,6 +99,7 @@ export function useSessions() {
             "I couldn't get a clear look at that — try another photo.";
           updateSession(sid, (s) => ({
             ...s,
+            secret,
             title: isFallback ? "Unclear photo" : "Identification failed",
             subtitle: isFallback ? "Try another image" : "Something went wrong",
             messages: [
@@ -129,7 +138,7 @@ export function useSessions() {
       setIsThinking(true);
 
       try {
-        const response = await postChat({ threadId: sid, message: trimmed });
+        const response = await postChat({ threadId: sid, message: trimmed, sessionSecret: session.secret });
         const replyText = response.error_message ?? response.final_script;
         const role: UiMessage["role"] = response.error_message ? "error" : "ai";
         updateSession(sid, (s) => ({

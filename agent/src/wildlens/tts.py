@@ -73,26 +73,35 @@ def synthesise_audio(
     by the OS temp-file janitor). Callers that need persistence should copy
     the file to permanent storage before the process exits.
 
-    Returns "NO_TTS_ENGINE_INSTALLED" if neither engine is available —
-    the graph continues cleanly and the caller can handle the sentinel.
+    Returns "NO_TTS_ENGINE_INSTALLED" if no engine produced audio — either
+    because neither is installed, or because every installed engine raised at
+    runtime (e.g. a network drop mid-synthesis). Either way the graph
+    continues cleanly and the caller (node_generate_audio / chat.py) already
+    handles the sentinel as a non-fatal, text-only degradation.
     """
     fd, file_path = tempfile.mkstemp(suffix=".mp3", prefix="safari_")
     os.close(fd)  # release the fd; the TTS engine opens the file independently
 
     if _EDGE_TTS_AVAILABLE:
-        log.info("[TTS] edge-tts voice=%s → %s", edge_tts_voice, file_path)
-        _run_in_thread(_edge_tts_coroutine(script, file_path, edge_tts_voice))
+        try:
+            log.info("[TTS] edge-tts voice=%s → %s", edge_tts_voice, file_path)
+            _run_in_thread(_edge_tts_coroutine(script, file_path, edge_tts_voice))
+            return file_path
+        except Exception as exc:
+            log.warning("[TTS] edge-tts failed at runtime (%s) — falling through to gTTS.", exc)
 
-    elif _GTTS_AVAILABLE:
-        log.info("[TTS] gTTS → %s", file_path)
-        _gTTS(text=script, lang="en", slow=False).save(file_path)
+    if _GTTS_AVAILABLE:
+        try:
+            log.info("[TTS] gTTS → %s", file_path)
+            _gTTS(text=script, lang="en", slow=False).save(file_path)
+            return file_path
+        except Exception as exc:
+            log.warning("[TTS] gTTS failed at runtime (%s).", exc)
 
-    else:
-        os.unlink(file_path)  # clean up the empty temp file we just created
-        log.warning(
-            "No TTS engine found. "
-            "Install edge-tts (pip install edge-tts) or gTTS (pip install gTTS)."
-        )
-        return "NO_TTS_ENGINE_INSTALLED"
-
-    return file_path
+    if os.path.exists(file_path):
+        os.unlink(file_path)  # clean up the empty/partial temp file
+    log.warning(
+        "No TTS engine produced audio. "
+        "Install edge-tts (pip install edge-tts) or gTTS (pip install gTTS)."
+    )
+    return "NO_TTS_ENGINE_INSTALLED"

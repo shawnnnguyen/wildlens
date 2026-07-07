@@ -1,7 +1,8 @@
 """
 Graph construction for the Safari Guide.
 
-Single compiled graph with MemorySaver checkpointer.
+Single compiled graph with an injectable checkpointer (MemorySaver by default;
+the backend supplies a SqliteSaver — see build_graph's checkpointer param).
 All conversational turns — photo or text — flow through one graph using
 the same thread_id session key.  The checkpointer restores full state
 between turns automatically; callers only pass the new inputs per turn.
@@ -45,6 +46,7 @@ START
 """
 from __future__ import annotations
 
+from langgraph.checkpoint.base import BaseCheckpointSaver
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -114,9 +116,10 @@ def build_graph(
     llm_text: BaseChatModel,
     retriever: BaseRetriever,
     tracing_enabled: bool = False,
+    checkpointer: BaseCheckpointSaver | None = None,
 ):
     """
-    Compile and return the Safari Guide graph with a MemorySaver checkpointer.
+    Compile and return the Safari Guide graph.
 
     llm_vision — multimodal model (Gemini) used only for node_analyze_image.
     llm_text   — text model (DeepSeek) used for summarise + persona nodes.
@@ -125,13 +128,13 @@ def build_graph(
         @observe() spans. Both call plain Python methods (retriever.retrieve(),
         synthesise_audio()) rather than LangChain Runnable.invoke(), so a
         LangChain-callback-based tracer never sees them otherwise.
+    checkpointer — defaults to an in-process MemorySaver (fine for tests/local
+        runs). The backend passes a SqliteSaver in production so state survives
+        a restart and DELETE /api/sessions/{id} can actually call
+        checkpointer.delete_thread() instead of only evicting a tracking set.
 
     Dependencies are injected via closures — each node remains a pure function
     and can be unit-tested with mocked llm / retriever.
-
-    For production persistence swap MemorySaver() with:
-        from langgraph.checkpoint.sqlite import SqliteSaver
-        checkpointer = SqliteSaver.from_conn_string("safari_sessions.db")
     """
 
     # Bind dependencies without globals
@@ -232,7 +235,7 @@ def build_graph(
     )
     g.add_edge("generate_audio", END)
 
-    return g.compile(checkpointer=MemorySaver())
+    return g.compile(checkpointer=checkpointer or MemorySaver())
 
 
 # ── Turn input helper ─────────────────────────────────────────────────────────

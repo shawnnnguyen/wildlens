@@ -42,7 +42,7 @@ Environment variables required
 PINECONE_API_KEY            — Pinecone API key
 PINECONE_INDEX_NAME         — Pinecone index name (default: safari-guide)
 SUPABASE_URL                — Supabase project URL
-SUPABASE_KEY                — Supabase service key (service role, not anon)
+SUPABASE_INGEST_KEY         — Supabase service-role key (falls back to SUPABASE_KEY)
 IUCN_API_KEY                — IUCN Red List API key (optional; uses mock if absent)
 API_NINJAS_KEY              — API Ninjas key (optional; skips characteristics chunk if absent)
 LILA_IMAGES_PER_SPECIES     — how many LILA BC images per species (default: 20)
@@ -142,7 +142,7 @@ def run_text_ingest(
     from .fetcher import APINinjasClient, EOLClient, IUCNClient, WikipediaClient, build_species_chunks
     from .supabase_store import SupabaseStore
 
-    store    = SupabaseStore() if not dry_run else None
+    store    = SupabaseStore(role="ingest") if not dry_run else None
     pc_index = _init_pinecone() if not dry_run else None
 
     # Clear cache dirs if --force
@@ -238,7 +238,7 @@ def run_lila_ingest(
     from .lila import LILADownloader
     from .supabase_store import SupabaseStore
 
-    store      = SupabaseStore() if not dry_run else None
+    store      = SupabaseStore(role="ingest") if not dry_run else None
     downloader = LILADownloader()
 
     results = downloader.run(
@@ -281,7 +281,7 @@ def run_eol_image_ingest(
     from .fetcher import EOLImageFetcher
     from .supabase_store import SupabaseStore
 
-    store   = SupabaseStore() if not dry_run else None
+    store   = SupabaseStore(role="ingest") if not dry_run else None
     fetcher = EOLImageFetcher(
         images_per_species=images_per_species,
         allow_commercial_only=allow_commercial_only,
@@ -331,7 +331,7 @@ def run_ultralytics_ingest(
     from .ultralytics_dl import UltralyticsDownloader
     from .supabase_store import SupabaseStore
 
-    store      = SupabaseStore() if not dry_run else None
+    store      = SupabaseStore(role="ingest") if not dry_run else None
     downloader = UltralyticsDownloader()
 
     results = downloader.run(supabase_store=store, dry_run=dry_run)

@@ -71,7 +71,10 @@ def init_rag(
 
     Env vars consumed:
         PINECONE_API_KEY, PINECONE_INDEX_NAME  — Pinecone connection
-        SUPABASE_URL, SUPABASE_KEY             — Supabase connection for BM25 corpus
+        SUPABASE_URL, SUPABASE_RUNTIME_KEY     — Supabase connection for BM25 corpus load +
+                                                  enrichment write-back (see SupabaseStore's
+                                                  role="runtime" docstring); falls back to
+                                                  SUPABASE_KEY if unset
         TAVILY_API_KEY                         — Tavily web search connection
         TAVILY_DAILY_CALL_CAP                  — max Tavily calls/day (default 500), see backends.py
     """
