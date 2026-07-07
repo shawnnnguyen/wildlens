@@ -137,9 +137,15 @@ def build_graph(
     and can be unit-tested with mocked llm / retriever.
     """
 
+    # node_check_relevance's embedding-similarity tier (see nodes.py) reuses
+    # the same local embedding model the retriever already loaded for RAG,
+    # rather than needing a dedicated build_graph param — gracefully None
+    # when retriever isn't an _EnsembleRetriever or has no embeddings model.
+    _embeddings = getattr(retriever, "embeddings", None)
+
     # Bind dependencies without globals
     def _analyze(s):         return node_analyze_image(s, llm_vision)
-    def _check_relevance(s): return node_check_relevance(s, llm_text)
+    def _check_relevance(s): return node_check_relevance(s, llm_text, _embeddings)
     def _retrieve(s):        return node_retrieve_information(s, retriever)
     def _summarize(s):       return node_summarize_history(s, llm_text)
     def _persona(s):         return node_generate_guide_persona(s, llm_text)
