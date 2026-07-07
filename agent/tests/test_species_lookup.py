@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from wild_lens.data.species_lookup import (
+from wildlens.data.species_lookup import (
     canonical_common_name,
     find_mentioned_species,
     ground_truth_threat_level,

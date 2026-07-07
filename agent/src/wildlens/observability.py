@@ -17,7 +17,7 @@ from typing import Any, Optional, TYPE_CHECKING
 if TYPE_CHECKING:
     from langfuse.langchain import CallbackHandler
 
-log = logging.getLogger("wild_lens.observability")
+log = logging.getLogger("wildlens.observability")
 
 _IMAGE_PREFIX = "data:image"
 _MAX_STRING_LEN = 2000

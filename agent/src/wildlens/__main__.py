@@ -18,7 +18,7 @@ logging.basicConfig(
     format="%(asctime)s │ %(levelname)-8s │ %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("wild_lens")
+log = logging.getLogger("wildlens")
 
 
 def run_chat() -> None:

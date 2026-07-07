@@ -12,10 +12,10 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from wild_lens.graphs import build_graph
-from wild_lens.observability import init_langfuse
-from wild_lens.rag import _NullRetriever, init_rag
-from wild_lens.tts import _EDGE_TTS_AVAILABLE, _GTTS_AVAILABLE
+from wildlens.graphs import build_graph
+from wildlens.observability import init_langfuse
+from wildlens.rag import _NullRetriever, init_rag
+from wildlens.tts import _EDGE_TTS_AVAILABLE, _GTTS_AVAILABLE
 
 from .audio_store import audio_janitor, ensure_audio_dir
 from .routers import audio, chat, health, sessions

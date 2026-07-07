@@ -6,8 +6,8 @@ import logging
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
-from wild_lens.graphs import make_turn_input
-from wild_lens.observability import invoke_with_tracing
+from wildlens.graphs import make_turn_input
+from wildlens.observability import invoke_with_tracing
 
 from ..audio_store import store_audio
 from ..dependencies import get_graph, get_langfuse_handler, get_session_registry

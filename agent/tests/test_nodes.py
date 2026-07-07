@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from wild_lens.state import MIN_CONFIDENCE, SafariGuideState, WildlifeIdentification
-from wild_lens.nodes import (
+from wildlens.state import MIN_CONFIDENCE, SafariGuideState, WildlifeIdentification
+from wildlens.nodes import (
     _is_synthetic_marker,
     _strip_synthetic,
     _to_data_uri,
@@ -78,7 +78,7 @@ def test_analyze_image_escalates_threat_level_from_curated_data():
     )
     llm = _mock_llm_returning(ident)
     state = _base_state(image_path="lion.jpg")
-    with patch("wild_lens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+    with patch("wildlens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
         result = node_analyze_image(state, llm)
     assert result["identification_result"]["threat_level"] == "high"
     assert result["identification_history"][0]["threat_level"] == "high"
@@ -95,7 +95,7 @@ def test_analyze_image_does_not_downgrade_high_call():
     )
     llm = _mock_llm_returning(ident)
     state = _base_state(image_path="elephant.jpg")
-    with patch("wild_lens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+    with patch("wildlens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
         result = node_analyze_image(state, llm)
     assert result["identification_result"]["threat_level"] == "high"
 
@@ -112,7 +112,7 @@ def test_analyze_image_low_confidence_does_not_set_identification_result():
     )
     llm = _mock_llm_returning(ident)
     state = _base_state(image_path="blurry.jpg")
-    with patch("wild_lens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+    with patch("wildlens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
         result = node_analyze_image(state, llm)
     assert "identification_result" not in result
     assert "chat_history" not in result
@@ -144,12 +144,12 @@ def test_identification_result_survives_a_later_blurry_photo():
     )
 
     state = _base_state(image_path="lion.jpg")
-    with patch("wild_lens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+    with patch("wildlens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
         turn1 = node_analyze_image(state, _mock_llm_returning(lion))
     state.update(turn1)
 
     state["image_path"] = "blurry.jpg"
-    with patch("wild_lens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+    with patch("wildlens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
         turn2 = node_analyze_image(state, _mock_llm_returning(blurry))
     state.update(turn2)
 
@@ -272,7 +272,7 @@ def test_topic_redirect_fallback_sets_final_script_and_error():
 def test_retrieve_information_canonicalizes_species_name():
     """Bug #10: casing/whitespace drift in Gemini's output must be canonicalized
     against species_list.json before being used as the retriever's species filter."""
-    from wild_lens.rag import _EnsembleRetriever
+    from wildlens.rag import _EnsembleRetriever
 
     retriever = _EnsembleRetriever(retrievers=[], weights=[])
     state = _base_state(identification_result={"species": "african  lion (panthera leo)"})
@@ -287,7 +287,7 @@ def test_retrieve_information_prefers_mentioned_species_over_identification_resu
     """Cross-animal follow-up: identification_result is still the lion, but
     this turn's message names the elephant — retrieval must target the
     elephant, not silently keep filtering on the stale identification."""
-    from wild_lens.rag import _EnsembleRetriever
+    from wildlens.rag import _EnsembleRetriever
 
     retriever = _EnsembleRetriever(retrievers=[], weights=[])
     state = _base_state(
@@ -306,7 +306,7 @@ def test_retrieve_information_enriches_web_docs_only():
     """Web docs returned by retrieval get handed to enrich_async; curated
     guidebook docs (any other source) must never be enriched."""
     from langchain_core.documents import Document
-    from wild_lens.rag import _EnsembleRetriever
+    from wildlens.rag import _EnsembleRetriever
 
     web_doc = Document(
         page_content="Lions are most active at dawn and dusk.",
@@ -338,8 +338,8 @@ def test_enqueue_enrichment_gives_each_web_doc_a_distinct_section():
     upsert_document's delete-then-insert would make each write clobber the last,
     keeping only the final doc instead of all of them."""
     from langchain_core.documents import Document
-    from wild_lens.nodes import _enqueue_enrichment
-    from wild_lens.rag import _EnsembleRetriever
+    from wildlens.nodes import _enqueue_enrichment
+    from wildlens.rag import _EnsembleRetriever
 
     docs = [
         Document(page_content=f"fact {i}", metadata={"source": "web", "url": f"http://x/{i}"})
@@ -360,8 +360,8 @@ def test_enqueue_enrichment_section_stable_across_calls():
     would otherwise turn a repeat scrape of the same page into a brand new
     row instead of an idempotent overwrite of the old one."""
     from langchain_core.documents import Document
-    from wild_lens.nodes import _enqueue_enrichment
-    from wild_lens.rag import _EnsembleRetriever
+    from wildlens.nodes import _enqueue_enrichment
+    from wildlens.rag import _EnsembleRetriever
 
     doc = Document(page_content="fact", metadata={"source": "web", "url": "http://x/1"})
     retriever = _EnsembleRetriever(retrievers=[], weights=[])
@@ -381,7 +381,7 @@ def test_format_fact_labels_web_enriched_as_web_not_guidebook():
     safety conflicts, so mislabeling here would promote unverified scraped
     text to vetted status."""
     from langchain_core.documents import Document
-    from wild_lens.nodes import _format_fact
+    from wildlens.nodes import _format_fact
 
     doc = Document(
         page_content="Lions sleep up to 20 hours a day.",
@@ -466,7 +466,7 @@ def test_analyze_image_sets_genus_and_species_epithet():
     )
     llm = _mock_llm_returning(ident)
     state = _base_state(image_path="lion.jpg")
-    with patch("wild_lens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+    with patch("wildlens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
         result = node_analyze_image(state, llm)
     assert result["identification_result"]["genus"] == "Panthera"
     assert result["identification_result"]["species_epithet"] == "leo"
@@ -482,7 +482,7 @@ def test_generate_audio_returns_empty_when_no_script():
 
 def test_generate_audio_calls_synthesise(tmp_path):
     state = _base_state(final_script="The lion roars across the savanna.")
-    with patch("wild_lens.nodes.synthesise_audio", return_value=str(tmp_path / "test.mp3")) as mock_tts:
+    with patch("wildlens.nodes.synthesise_audio", return_value=str(tmp_path / "test.mp3")) as mock_tts:
         result = node_generate_audio(state)
     mock_tts.assert_called_once_with("The lion roars across the savanna.")
     assert result["audio_file_path"].endswith("test.mp3")

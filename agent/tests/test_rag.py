@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from langchain_community.retrievers import BM25Retriever
 from langchain_core.documents import Document
-from wild_lens.rag import (
+from wildlens.rag import (
     _MOCK_DOCUMENTS,
     _EnsembleRetriever,
     _NullRetriever,
@@ -23,7 +23,7 @@ from wild_lens.rag import (
     _doc_key,
     init_rag,
 )
-from wild_lens.rag.ranking import _bm25_search
+from wildlens.rag.ranking import _bm25_search
 
 _TEST_CORPUS = [
     Document(page_content="The African lion is an apex predator of the savanna.", metadata={"species": "Lion"}),
@@ -37,10 +37,10 @@ _TEST_CORPUS = [
 def _mock_init_rag(**kwargs):
     """Run init_rag() with all external calls stubbed out."""
     with (
-        patch("wild_lens.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
-        patch("wild_lens.rag.factory._init_pinecone_retriever", return_value=(_NullRetriever(), None)),
-        patch("wild_lens.rag.factory._load_bm25_corpus", return_value=(_TEST_CORPUS, None)),
-        patch("wild_lens.rag.factory._load_cross_encoder", return_value=None),
+        patch("wildlens.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
+        patch("wildlens.rag.factory._init_pinecone_retriever", return_value=(_NullRetriever(), None)),
+        patch("wildlens.rag.factory._load_bm25_corpus", return_value=(_TEST_CORPUS, None)),
+        patch("wildlens.rag.factory._load_cross_encoder", return_value=None),
     ):
         return init_rag(**kwargs)
 
@@ -314,9 +314,9 @@ def _mock_init_rag_no_reranker_patch(**kwargs):
     """Like _mock_init_rag but leaves _load_cross_encoder unpatched, so callers
     can control it themselves for background-loading tests."""
     with (
-        patch("wild_lens.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
-        patch("wild_lens.rag.factory._init_pinecone_retriever", return_value=(_NullRetriever(), None)),
-        patch("wild_lens.rag.factory._load_bm25_corpus", return_value=(_TEST_CORPUS, None)),
+        patch("wildlens.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
+        patch("wildlens.rag.factory._init_pinecone_retriever", return_value=(_NullRetriever(), None)),
+        patch("wildlens.rag.factory._load_bm25_corpus", return_value=(_TEST_CORPUS, None)),
     ):
         return init_rag(**kwargs)
 
@@ -324,7 +324,7 @@ def _mock_init_rag_no_reranker_patch(**kwargs):
 def test_init_rag_returns_immediately_with_reranker_pending():
     """cross_encoder starts None (RRF-only) — the background thread is not
     forced to complete before init_rag() returns, matching non-blocking startup."""
-    with patch("wild_lens.rag.factory.threading.Thread") as mock_thread:
+    with patch("wildlens.rag.factory.threading.Thread") as mock_thread:
         mock_thread.return_value = MagicMock()  # .start() is a no-op, never runs the target
         retriever = _mock_init_rag_no_reranker_patch(use_reranker=True)
     assert retriever.cross_encoder is None
@@ -340,8 +340,8 @@ def test_cross_encoder_becomes_active_after_background_load_completes():
         self._target(*self._args, **self._kwargs)
 
     with (
-        patch("wild_lens.rag.factory.threading.Thread.start", _run_synchronously, create=True),
-        patch("wild_lens.rag.factory._load_cross_encoder", return_value=fake_model),
+        patch("wildlens.rag.factory.threading.Thread.start", _run_synchronously, create=True),
+        patch("wildlens.rag.factory._load_cross_encoder", return_value=fake_model),
     ):
         retriever = _mock_init_rag_no_reranker_patch(use_reranker=True)
 
@@ -374,7 +374,7 @@ def test_tavily_daily_cap_resets_next_day():
         assert tavily.invoke("q2") == []  # cap hit for today
 
         tomorrow = datetime.date.today() + datetime.timedelta(days=1)
-        with patch("wild_lens.rag.backends.datetime") as mock_dt:
+        with patch("wildlens.rag.backends.datetime") as mock_dt:
             mock_dt.date.today.return_value = tomorrow
             tavily.invoke("q3")
 
@@ -399,14 +399,14 @@ def test_tavily_daily_cap_malformed_env_var_falls_back_to_default():
 def test_init_web_cache_retriever_returns_none_without_pinecone_index():
     """No Pinecone index means no namespace to build a web_cache retriever on
     top of — must degrade to None (excluded from the ensemble) rather than error."""
-    from wild_lens.rag.factory import _init_web_cache_retriever
+    from wildlens.rag.factory import _init_web_cache_retriever
 
     assert _init_web_cache_retriever(MagicMock(), None, k=5) is None
 
 
 def test_init_web_cache_retriever_wraps_web_cache_namespace():
-    from wild_lens.rag import _PineconeRetrieverWrapper
-    from wild_lens.rag.factory import _init_web_cache_retriever
+    from wildlens.rag import _PineconeRetrieverWrapper
+    from wildlens.rag.factory import _init_web_cache_retriever
 
     fake_index = MagicMock()
     with patch("langchain_pinecone.PineconeVectorStore") as mock_vs:
