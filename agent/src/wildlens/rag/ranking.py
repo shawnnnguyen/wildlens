@@ -18,10 +18,22 @@ from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict, PrivateAttr
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .backends import _TavilyRetriever
 
 log = logging.getLogger(__name__)
+
+
+@retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=0.5, min=0.5, max=2), reraise=True)
+def _call_with_retry(fn, *args, **kwargs):
+    """
+    One retry (light — this runs on the interactive /chat request path, so it
+    can't add much latency) for a single sub-retriever call before _run below
+    gives up on it for this query. Covers transient network blips against
+    Pinecone/Tavily; harmless overhead on the rare BM25 failure too.
+    """
+    return fn(*args, **kwargs)
 
 
 def _doc_key(doc: Document) -> tuple[str, str | None] | tuple[str | None, str | None, str | None] | int:
@@ -250,20 +262,29 @@ class _EnsembleRetriever(BaseRetriever):
         def _run(retriever) -> list[Document]:
             try:
                 if species and hasattr(retriever, "similarity_search"):
-                    return retriever.similarity_search(query, filter={"species": species})
+                    return _call_with_retry(retriever.similarity_search, query, filter={"species": species})
                 elif species and isinstance(retriever, BM25Retriever):
-                    return _bm25_search(retriever, query, n=15, species=species)
+                    return _call_with_retry(_bm25_search, retriever, query, n=15, species=species)
                 elif web_cache is not None and isinstance(retriever, _TavilyRetriever):
                     # Tavily ignores `species` (no filtering), so the two `retrieve()`
                     # fusion passes (species-filtered, then unfiltered-if-empty) would
                     # otherwise issue the identical web query twice — cache it.
                     if query not in web_cache:
-                        web_cache[query] = retriever.invoke(query)
+                        web_cache[query] = _call_with_retry(retriever.invoke, query)
                     return web_cache[query]
                 else:
-                    return retriever.invoke(query)
+                    return _call_with_retry(retriever.invoke, query)
             except Exception as exc:
-                log.warning(f"Retriever {retriever!r} failed for query {query!r}: {exc}")
+                # Escalated from warning to error: this retriever produced nothing for
+                # this query after a retry, and its result set silently degrades to
+                # empty — a real gap (blind spot vs. a genuine "no matches" result)
+                # that's easy to miss at "warning" level. Routing this to a paging/
+                # alerting channel instead of just the log is Phase 3 (structured
+                # observability) scope — this codebase has no such channel yet.
+                log.error(
+                    "Retriever %r failed for query %r after retry — degrading to empty result: %s",
+                    retriever, query, exc,
+                )
                 return []
 
         def _accumulate(retrievers: list[Any], weights: list[float]) -> None:

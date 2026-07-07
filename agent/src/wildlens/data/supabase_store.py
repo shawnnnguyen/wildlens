@@ -62,17 +62,46 @@ class SupabaseStore:
     """
     Thin wrapper around the Supabase Python client.
 
-    Env vars required:
-      SUPABASE_URL  — https://<project-ref>.supabase.co
-      SUPABASE_KEY  — anon/service key (service key for server-side ingestion)
+    Two callers, two very different privilege needs — split by the `role`
+    param rather than sharing one service-role key everywhere:
+
+      role="ingest"  (data/ingest.py, offline/CLI only) — needs full
+          read+write on species, documents, image_files, and the
+          wildlife-images Storage bucket. Uses SUPABASE_INGEST_KEY.
+
+      role="runtime" (default; rag/factory.py's BM25 corpus load, and
+          ranking.py's enrich_async() write-back cache) — only ever needs
+          SELECT on species/documents and INSERT/UPDATE on documents (never
+          image_files or Storage, never DELETE). Uses SUPABASE_RUNTIME_KEY.
+          Point this at a Supabase Postgres role scoped to exactly that via
+          RLS, e.g.:
+              create policy "runtime_read_species" on species
+                for select using (true);
+              create policy "runtime_read_documents" on documents
+                for select using (true);
+              create policy "runtime_write_documents" on documents
+                for insert, update using (true) with check (true);
+          (No policy on image_files/storage.objects for this role — RLS
+          default-denies anything without a matching policy.)
+
+    Both fall back to SUPABASE_KEY (a single service-role key for both roles)
+    if the role-specific var isn't set, so today's single-key setup keeps
+    working unconfigured — this is additive, not a breaking change.
+
+    Env vars:
+      SUPABASE_URL          — https://<project-ref>.supabase.co
+      SUPABASE_INGEST_KEY   — service-role key, ingest.py only
+      SUPABASE_RUNTIME_KEY  — least-privilege key, the running agent
+      SUPABASE_KEY          — fallback used for either role if the
+                               role-specific var above isn't set
     """
 
-    def __init__(self):
+    def __init__(self, role: str = "runtime"):
         url = os.getenv("SUPABASE_URL")
-        key = os.getenv("SUPABASE_KEY")
+        key = os.getenv(f"SUPABASE_{role.upper()}_KEY") or os.getenv("SUPABASE_KEY")
         if not url or not key:
             raise EnvironmentError(
-                "SUPABASE_URL and SUPABASE_KEY must be set.\n"
+                f"SUPABASE_URL and SUPABASE_{role.upper()}_KEY (or SUPABASE_KEY) must be set.\n"
                 "Get them from your Supabase project dashboard → Settings → API."
             )
         from supabase import create_client

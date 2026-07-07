@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 
@@ -79,9 +80,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     langfuse_handler = init_langfuse()
     log.info("Langfuse tracing: %s", "enabled" if langfuse_handler else "disabled")
 
+    # 4c. SQLite checkpointer — survives restarts (MemorySaver was pure in-process
+    # RAM) and gives DELETE /api/sessions/{id} a real delete_thread() to call.
+    # check_same_thread=False: graph.invoke() runs via asyncio.to_thread, so calls
+    # land on whichever worker thread the event loop picks, not always the same one.
+    from langgraph.checkpoint.sqlite import SqliteSaver
+
+    sessions_db_path = os.getenv("SESSIONS_DB_PATH", "safari_sessions.db")
+    sqlite_conn = sqlite3.connect(sessions_db_path, check_same_thread=False)
+    checkpointer = SqliteSaver(sqlite_conn)
+    await asyncio.to_thread(checkpointer.setup)
+
     # 5. Build compiled graph
     graph = await asyncio.to_thread(
-        build_graph, llm_vision, llm_text, retriever, tracing_enabled=bool(langfuse_handler)
+        build_graph,
+        llm_vision, llm_text, retriever,
+        tracing_enabled=bool(langfuse_handler),
+        checkpointer=checkpointer,
     )
 
     # 6. Detect TTS (import-time flags; no I/O)
@@ -93,7 +108,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.rag_backend = rag_backend
     app.state.tts_backend = tts_backend
     app.state.langfuse_handler = langfuse_handler
-    app.state.session_registry = SessionRegistry()
+    # Same SQLite file as the checkpointer above — session secrets and graph
+    # state live side by side and share the same restart-survives guarantee.
+    app.state.session_registry = SessionRegistry(sessions_db_path)
 
     # 9. Ensure audio serving directory exists
     ensure_audio_dir()
@@ -112,6 +129,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         await janitor
     except asyncio.CancelledError:
         pass
+    sqlite_conn.close()
     log.info("Safari Guide backend shutting down")
 
 
@@ -125,7 +143,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Content-Type"],
+        allow_headers=["Content-Type", "X-Session-Secret"],
     )
 
     # ── Exception handlers ────────────────────────────────────────────────────

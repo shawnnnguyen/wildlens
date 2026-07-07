@@ -4,7 +4,7 @@ import asyncio
 import base64
 import logging
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 
 from wildlens.graphs import make_turn_input
 from wildlens.observability import invoke_with_tracing
@@ -64,9 +64,53 @@ async def chat(
     message: str | None = Form(None),
     voice_requested: bool = Form(False),
     image: UploadFile | None = File(None),
+    x_session_secret: str | None = Header(default=None, alias="X-Session-Secret"),
     graph=Depends(get_graph),
     registry: SessionRegistry = Depends(get_session_registry),
     langfuse_handler=Depends(get_langfuse_handler),
+) -> ChatResponse:
+    # ── Session auth ─────────────────────────────────────────────────────────
+    # registry.create() is an atomic INSERT: it succeeds (and returns the new
+    # secret) only on the very first request for this thread_id. Every later
+    # request for the same thread_id must present that secret — the ID alone
+    # is not enough to join or continue someone else's session. No accounts;
+    # this is a bearer capability token sized for a single-use, anonymous app.
+    new_secret = registry.create(thread_id)
+    if new_secret is None and not registry.verify(thread_id, x_session_secret):
+        raise HTTPException(
+            status_code=403,
+            detail=ErrorResponse(
+                error=ErrorDetail(
+                    code="INVALID_SESSION_SECRET",
+                    message="Missing or incorrect X-Session-Secret for this thread_id.",
+                ),
+                thread_id=thread_id,
+            ).model_dump(),
+        )
+
+    try:
+        return await _handle_chat_turn(
+            thread_id, message, voice_requested, image, new_secret, graph, langfuse_handler,
+        )
+    except HTTPException:
+        if new_secret is not None:
+            # This was a brand-new thread_id and the turn failed before the
+            # client ever received its secret (registry.create() above already
+            # consumed the atomic "first request" slot) — un-register it so a
+            # retry with the same thread_id gets treated as a fresh first call
+            # instead of being permanently locked out with no secret to present.
+            registry.evict(thread_id)
+        raise
+
+
+async def _handle_chat_turn(
+    thread_id: str,
+    message: str | None,
+    voice_requested: bool,
+    image: UploadFile | None,
+    new_secret: str | None,
+    graph,
+    langfuse_handler,
 ) -> ChatResponse:
     # ── Input validation ──────────────────────────────────────────────────────
     if not message and image is None:
@@ -171,11 +215,9 @@ async def chat(
                 if not error_message:
                     error_message = "Audio storage failed."
 
-    # ── Register session so history/delete endpoints can find it ─────────────
-    registry.register(thread_id)
-
     return ChatResponse(
         thread_id=thread_id,
+        session_secret=new_secret,
         final_script=final_script,
         audio_url=audio_url,
         identification=_build_identification(

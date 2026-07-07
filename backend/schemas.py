@@ -18,6 +18,8 @@ class WildlifeIdentificationOut(BaseModel):
 
 class ChatResponse(BaseModel):
     thread_id: str
+    session_secret: str | None  # only set on the turn that creates thread_id; store and
+                                 # resend as the X-Session-Secret header on every later call
     final_script: str
     audio_url: str | None
     identification: WildlifeIdentificationOut | None

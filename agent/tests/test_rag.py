@@ -74,6 +74,22 @@ def test_retrieval_degrades_to_bm25_without_pinecone():
     assert docs
 
 
+def test_failing_retriever_retries_then_degrades_to_empty_not_raise():
+    """A sub-retriever whose .invoke() always raises must not crash the whole
+    fused retrieval — after one retry (Phase 1 hardening, see _call_with_retry
+    in ranking.py) it degrades to an empty contribution while other
+    retrievers' results still come through."""
+    good = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
+    bad = MagicMock()
+    bad.invoke.side_effect = RuntimeError("network drop")
+    retriever = _EnsembleRetriever(retrievers=[good, bad], weights=[1.0, 1.0])
+
+    docs = retriever.retrieve("African lion hunting behaviour")
+
+    assert docs  # good retriever's results still come through
+    assert bad.invoke.call_count == 2  # 1 attempt + 1 retry (stop_after_attempt(2))
+
+
 def test_doc_key_unique_per_web_url():
     """Web docs must not collide in _doc_key just because they share source='web'."""
     doc1 = Document(page_content="a", metadata={"source": "web", "url": "http://x/1"})

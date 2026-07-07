@@ -27,6 +27,7 @@ from pathlib import Path
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .data.species_lookup import canonical_common_name, find_mentioned_species, ground_truth_threat_level
 from .rag import _EnsembleRetriever
@@ -38,6 +39,18 @@ log = logging.getLogger("safari_guide.nodes")
 # Ordering used to escalate (never downgrade) Gemini's live threat_level call
 # against species_list.json's curated ground truth — see node_analyze_image.
 _THREAT_RANK = {"low": 0, "medium": 1, "high": 2}
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8), reraise=True)
+def _invoke_with_retry(llm: BaseChatModel, messages: list):
+    """
+    Shared retry policy for the plain llm.invoke() calls in node_summarize_history
+    and node_generate_guide_persona — both previously had zero error handling, so a
+    transient API blip (timeout, rate limit) would bubble all the way to a generic
+    500. node_analyze_image and node_check_relevance already wrap their own calls in
+    try/except and aren't touched here.
+    """
+    return llm.invoke(messages)
 
 # ── Baako persona (injected first in every generation call) ───────────────────
 _BAAKO_SYSTEM = SystemMessage(content=(
@@ -589,7 +602,15 @@ def node_summarize_history(
         "This is long-term memory for an ongoing safari conversation."
     ))
 
-    response = llm.invoke([prompt])
+    try:
+        response = _invoke_with_retry(llm, [prompt])
+    except Exception as exc:
+        # Non-fatal: skip this turn's summarization rather than failing the whole
+        # turn. summarized_upto is left unadvanced, so the same delta is retried
+        # on the next call that crosses the threshold.
+        log.error("   → summarize_history LLM call failed after retries, skipping: %s", exc)
+        return {}
+
     log.info("   → Conversation summary updated (%d words)", len(response.content.split()))
     return {"conversation_summary": response.content, "summarized_upto": boundary}
 
@@ -691,9 +712,24 @@ def node_generate_guide_persona(
             "isn't available yet rather than guessing or inventing it."
         ))
 
-    messages  = [_BAAKO_SYSTEM] + context_msgs + [task]
-    response  = llm.invoke(messages)
-    script    = response.content
+    messages = [_BAAKO_SYSTEM] + context_msgs + [task]
+    try:
+        response = _invoke_with_retry(llm, messages)
+    except Exception as exc:
+        # final_script must always be set (see docstring) — degrade to a fixed,
+        # zero-token apology rather than letting this bubble to a generic 500.
+        log.error("   → generate_guide_persona LLM call failed after retries: %s", exc)
+        script = (
+            "Ah, my words got lost somewhere out on the savanna — could you ask "
+            "me that again? I want to make sure I get it right for you."
+        )
+        return {
+            "final_script":  script,
+            "error_message": str(exc),
+            "chat_history":  [task, AIMessage(content=script)],
+        }
+
+    script = response.content
     log.info("   → Script generated (%d words)", len(script.split()))
 
     return {

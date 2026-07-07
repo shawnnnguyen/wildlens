@@ -12,6 +12,7 @@ export interface WildlifeIdentification {
 
 export interface ChatResponse {
   thread_id: string;
+  session_secret: string | null; // only set on the turn that creates thread_id
   final_script: string;
   audio_url: string | null;
   identification: WildlifeIdentification | null;
@@ -67,6 +68,7 @@ export type UiMessage =
 
 export interface Session {
   id: string; // doubles as the backend thread_id, once identification has started
+  secret: string; // capability token returned once at session creation; "" until then
   title: string;
   subtitle: string;
   thumbnail: string;

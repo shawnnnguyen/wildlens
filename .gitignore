@@ -21,6 +21,8 @@ data/cache/
 
 # Generated at runtime (backend/)
 backend/static/audio/
+safari_sessions.db
+safari_sessions.db-*
 
 # IDE
 .idea/

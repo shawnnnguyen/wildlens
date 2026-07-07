@@ -1,5 +1,9 @@
 # ── Orchestration ──────────────────────────────────────────────────────────────
 langgraph>=1.0.0
+langgraph-checkpoint-sqlite>=3.0.0   # SqliteSaver — checkpointer used by the backend in production
+
+# ── Retry/backoff ──────────────────────────────────────────────────────────────
+tenacity>=8.2.0
 
 # ── LangChain — 1.x era (langchain-core 1.x / langchain 1.x) ─────────────────
 langchain>=1.0.0

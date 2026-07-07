@@ -3,7 +3,6 @@ State schema and structured-output Pydantic model for the Safari Guide graph.
 """
 from __future__ import annotations
 
-import operator
 import os
 from typing import Annotated, Literal, TypedDict
 
@@ -14,6 +13,17 @@ from pydantic import BaseModel, Field
 # ── Configurable thresholds ───────────────────────────────────────────────────
 MIN_CONFIDENCE: float = float(os.getenv("MIN_CONFIDENCE", "0.60"))
 SUMMARY_THRESHOLD: int = 10  # summarise chat_history when it exceeds this many messages
+MAX_IDENTIFICATION_HISTORY: int = 15  # keep only the most recent N identified animals per session
+
+
+def _bounded_identification_history(existing: list[dict], new: list[dict]) -> list[dict]:
+    """
+    Reducer for identification_history: concatenates like operator.add, then
+    keeps only the most recent MAX_IDENTIFICATION_HISTORY entries so a long
+    session (many photos) can't grow this field — and the persona prompt's
+    animals-seen-this-session digest built from it — without bound.
+    """
+    return (existing + new)[-MAX_IDENTIFICATION_HISTORY:]
 
 
 # ── Graph state ───────────────────────────────────────────────────────────────
@@ -24,14 +34,15 @@ class SafariGuideState(TypedDict):
 
     Reducer rules
     ─────────────
-    chat_history          add_messages  — appends + deduplicates by message id
-    identification_history operator.add — list concatenation; never overwritten
-    All other fields      last-write-wins (default)
+    chat_history           add_messages                 — appends + deduplicates by message id
+    identification_history _bounded_identification_history — appends, keeps last MAX_IDENTIFICATION_HISTORY
+    All other fields       last-write-wins (default)
 
     Caller contract per turn
     ────────────────────────
     Pass only: image_path, user_message, voice_requested, plus the five reset
-    fields below.  The MemorySaver checkpointer restores everything else.
+    fields below.  The checkpointer (MemorySaver or SqliteSaver — see
+    graphs.py) restores everything else.
     """
 
     # ── Caller inputs (set fresh every invoke) ────────────────────────────────
@@ -63,9 +74,12 @@ class SafariGuideState(TypedDict):
     chat_history:           Annotated[list[BaseMessage], add_messages]
 
     # ── Long-range memory ─────────────────────────────────────────────────────
-    identification_history: Annotated[list[dict], operator.add]
-    # Every analysed animal is appended here via operator.add so the full session
-    # history of species is always available for cross-animal comparison questions.
+    identification_history: Annotated[list[dict], _bounded_identification_history]
+    # Every analysed animal is appended here so the recent session history of
+    # species is available for cross-animal comparison questions — bounded to
+    # the last MAX_IDENTIFICATION_HISTORY entries so an unusually long session
+    # (many photos) can't grow this field, or the persona prompt digest built
+    # from it, without limit.
 
     conversation_summary:   str
     # LLM-compressed digest of older chat_history turns (beyond the 6-message
