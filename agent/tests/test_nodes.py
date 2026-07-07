@@ -22,9 +22,11 @@ from wild_lens.nodes import (
     _strip_synthetic,
     _to_data_uri,
     node_analyze_image,
+    node_check_relevance,
     node_generate_guide_persona,
     node_retrieve_information,
     node_summarize_history,
+    node_topic_redirect_fallback,
     node_unclear_photo_fallback,
     node_generate_audio,
     parse_binomial,
@@ -44,6 +46,7 @@ def _base_state(**overrides) -> SafariGuideState:
         summarized_upto=0,
         identification_result={},
         current_analysis={},
+        message_relevance={},
         retrieved_facts="",
         final_script="",
         audio_file_path="",
@@ -154,6 +157,116 @@ def test_identification_result_survives_a_later_blurry_photo():
     assert state["current_analysis"]["species"] == "unknown"
 
 
+# ── node_check_relevance ──────────────────────────────────────────────────────
+
+def _mock_llm_content(text: str) -> MagicMock:
+    """A llm.invoke(...) stub whose .content is a real string, not a bare
+    MagicMock — needed because MagicMock's default __bool__/.startswith()
+    chain is truthy, which would silently make _llm_classify_relevance
+    misclassify everything as off_topic if content were left unconfigured."""
+    llm = MagicMock()
+    llm.invoke.return_value = MagicMock(content=text)
+    return llm
+
+
+def test_check_relevance_species_mention_skips_llm():
+    llm = MagicMock()
+    state = _base_state(user_message="what about elephants tho?")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+    assert result["message_relevance"]["mentioned_species"] == "African Elephant"
+    llm.invoke.assert_not_called()
+
+
+def test_check_relevance_wildlife_keyword_skips_llm():
+    llm = MagicMock()
+    state = _base_state(user_message="what do predators eat around here?")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+    assert result["message_relevance"]["mentioned_species"] is None
+    llm.invoke.assert_not_called()
+
+
+def test_check_relevance_small_talk_skips_llm():
+    llm = MagicMock()
+    state = _base_state(user_message="thanks so much!")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "small_talk"
+    llm.invoke.assert_not_called()
+
+
+def test_check_relevance_greeting_plus_real_question_is_not_small_talk():
+    """A message containing BOTH a small-talk phrase and a real wildlife
+    question must not be misrouted to small_talk (which would skip
+    retrieval) — species/keyword matches must win over a mere greeting."""
+    llm = MagicMock()
+    state = _base_state(user_message="Hi Baako, what do lions eat?")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+    assert result["message_relevance"]["mentioned_species"] == "African Lion"
+
+    state2 = _base_state(user_message="Thanks! What about elephants?")
+    result2 = node_check_relevance(state2, llm)
+    assert result2["message_relevance"]["status"] == "on_topic"
+    assert result2["message_relevance"]["mentioned_species"] == "African Elephant"
+
+
+def test_check_relevance_ambiguous_message_uses_llm_off_topic():
+    llm = _mock_llm_content("OFF_TOPIC")
+    state = _base_state(user_message="what's the wifi password")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"] == {
+        "status": "off_topic", "mentioned_species": None, "classification_failed": False,
+    }
+    llm.invoke.assert_called_once()
+
+
+def test_check_relevance_ambiguous_message_uses_llm_on_topic():
+    llm = _mock_llm_content("ON_TOPIC")
+    state = _base_state(user_message="tell me something interesting")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+
+
+def test_check_relevance_llm_error_fails_open_and_flags_failure():
+    llm = MagicMock()
+    llm.invoke.side_effect = RuntimeError("api down")
+    state = _base_state(user_message="what's the wifi password")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+    assert result["message_relevance"]["classification_failed"] is True
+
+
+def test_check_relevance_verbose_reply_not_misparsed_as_off_topic():
+    """A verbose reply containing the substring 'OFF_TOPIC' must not be
+    misclassified — only a response that actually starts with OFF counts."""
+    llm = _mock_llm_content("This message is not OFF_TOPIC, it's about wildlife.")
+    state = _base_state(user_message="tell me something interesting")
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+
+
+def test_check_relevance_species_collision_uses_session_history():
+    llm = MagicMock()
+    state = _base_state(
+        user_message="what about gazelles?",
+        identification_history=[{"species": "Grant's Gazelle (Nanger granti)"}],
+    )
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["mentioned_species"] == "Grant's Gazelle"
+
+
+# ── node_topic_redirect_fallback ──────────────────────────────────────────────
+
+def test_topic_redirect_fallback_sets_final_script_and_error():
+    state = _base_state(user_message="what's the wifi password")
+    result = node_topic_redirect_fallback(state)
+    assert result["final_script"]
+    assert result["error_message"] == "off_topic"
+    assert len(result["chat_history"]) == 2
+    assert result["chat_history"][0].content == "what's the wifi password"
+
+
 # ── node_retrieve_information ────────────────────────────────────────────────
 
 def test_retrieve_information_canonicalizes_species_name():
@@ -168,6 +281,23 @@ def test_retrieve_information_canonicalizes_species_name():
     mock_retrieve.assert_called_once()
     _, kwargs = mock_retrieve.call_args
     assert kwargs["species"] == "African Lion"
+
+
+def test_retrieve_information_prefers_mentioned_species_over_identification_result():
+    """Cross-animal follow-up: identification_result is still the lion, but
+    this turn's message names the elephant — retrieval must target the
+    elephant, not silently keep filtering on the stale identification."""
+    from wild_lens.rag import _EnsembleRetriever
+
+    retriever = _EnsembleRetriever(retrievers=[], weights=[])
+    state = _base_state(
+        identification_result={"species": "African Lion (Panthera leo)"},
+        message_relevance={"status": "on_topic", "mentioned_species": "African Elephant"},
+    )
+    with patch.object(_EnsembleRetriever, "retrieve", return_value=[]) as mock_retrieve:
+        node_retrieve_information(state, retriever)
+    _, kwargs = mock_retrieve.call_args
+    assert kwargs["species"] == "African Elephant"
 
 
 # ── Knowledge Base Enrichment (enqueued from node_retrieve_information) ──────

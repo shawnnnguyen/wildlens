@@ -150,8 +150,10 @@ async def chat(
     raw_error = result.get("error_message", "") or ""
     identification_result = result.get("identification_result") or {}
 
-    # node_unclear_photo_fallback sets this exact sentinel; other errors are real faults
-    fallback_triggered = raw_error == "low_confidence"
+    # node_unclear_photo_fallback and node_topic_redirect_fallback set these exact
+    # sentinels for a valid, complete final_script with no backing identification/RAG
+    # facts — not a real fault; other error_message values are real faults.
+    fallback_triggered = raw_error in ("low_confidence", "off_topic")
     error_message: str | None = None if (not raw_error or fallback_triggered) else raw_error
 
     # ── Audio: move temp file into serving directory ──────────────────────────
