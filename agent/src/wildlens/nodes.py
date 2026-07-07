@@ -22,7 +22,9 @@ import base64
 import hashlib
 import logging
 import re
+import weakref
 from pathlib import Path
+from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
@@ -271,6 +273,15 @@ _SMALL_TALK_PHRASES = {
     "good morning", "good afternoon", "good evening", "how are you",
 }
 
+# Filler/intensifier words stripped before comparing a message against
+# _SMALL_TALK_PHRASES — lets "thanks so much!" and "hey there!" still count
+# as pure small talk without requiring an exact phrase match, while any
+# OTHER leftover word (a real question, a name, a topic) fails the match.
+_SMALL_TALK_FILLER_WORDS = {
+    "so", "much", "very", "really", "a", "lot", "too", "again", "there",
+    "now", "just", "man", "buddy", "friend",
+}
+
 
 def _contains_any_word(text: str, phrases: set[str]) -> bool:
     """
@@ -283,7 +294,21 @@ def _contains_any_word(text: str, phrases: set[str]) -> bool:
 
 
 def _is_small_talk(text: str) -> bool:
-    return _contains_any_word(text, _SMALL_TALK_PHRASES)
+    """
+    True only when the ENTIRE message (modulo punctuation and a handful of
+    filler words) IS a small-talk phrase — deliberately NOT a contains-
+    anywhere match. A message like "hi, where is my mom?" or "hey, does it
+    bite?" contains "hi"/"hey" but is not small talk; a fixed phrase list
+    can never enumerate every way a real (possibly entirely off-topic)
+    question might be phrased, so instead of trying to keyword-match every
+    such case, this makes the free fast path strict enough that anything
+    with real additional content simply isn't "small talk" and falls
+    through to the embedding classifier / LLM fallback below, which are
+    actually equipped to judge arbitrary phrasing.
+    """
+    words = re.findall(r"[a-z']+", text.lower())
+    cleaned = " ".join(w for w in words if w not in _SMALL_TALK_FILLER_WORDS)
+    return cleaned in _SMALL_TALK_PHRASES
 
 
 def _is_wildlife_related(text: str) -> bool:
@@ -295,14 +320,34 @@ _RELEVANCE_PROMPT = (
     "Decide whether the following visitor message is about wildlife, animals, "
     "nature, or the safari tour itself, or whether it is completely unrelated "
     "(e.g. technical support, general trivia, unrelated requests).\n\n"
+    "{context_line}"
     "Reply with exactly one word: ON_TOPIC or OFF_TOPIC.\n\n"
     "Message: {message}"
 )
 
+# Inserted into _RELEVANCE_PROMPT only when session_species is non-empty —
+# without this, a contextual pronoun follow-up ("can it swim?") has no
+# keyword/species-alias match and reaches the LLM with zero session context,
+# risking a false OFF_TOPIC refusal of a legitimate follow-up question.
+_RELEVANCE_CONTEXT_LINE = (
+    "This tourist has recently been discussing: {species}. If the message is "
+    "a pronoun or short contextual follow-up about one of those animals (e.g. "
+    "\"can it swim?\", \"how big is it?\", \"what about that one\"), treat it "
+    "as ON_TOPIC.\n\n"
+)
 
-def _llm_classify_relevance(message: str, llm: BaseChatModel) -> tuple[str, bool]:
+
+def _llm_classify_relevance(
+    message: str, llm: BaseChatModel, session_species: list[str] | None = None,
+) -> tuple[str, bool]:
     """
     Cheap LLM fallback for messages the free heuristics above can't classify.
+
+    session_species (most-recent-first, see node_check_relevance) is threaded
+    into the prompt as a disambiguation hint only — it does not change the
+    strict ON_TOPIC/OFF_TOPIC output contract, just makes the classifier aware
+    that a pronoun/contextual follow-up may refer to a recently-discussed
+    animal rather than being genuinely unrelated.
 
     Returns (status, classification_failed). Fails OPEN (status="on_topic")
     on any API error, empty response, or a reply that doesn't clearly start
@@ -314,7 +359,13 @@ def _llm_classify_relevance(message: str, llm: BaseChatModel) -> tuple[str, bool
     signal that the gate has effectively stopped doing anything.
     """
     try:
-        response = llm.invoke([HumanMessage(content=_RELEVANCE_PROMPT.format(message=message))])
+        context_line = (
+            _RELEVANCE_CONTEXT_LINE.format(species=", ".join(session_species))
+            if session_species else ""
+        )
+        response = llm.invoke([HumanMessage(
+            content=_RELEVANCE_PROMPT.format(context_line=context_line, message=message)
+        )])
         content = (response.content or "").strip()
         first_token = content.split()[0].upper() if content else ""
         status = "off_topic" if first_token.startswith("OFF") else "on_topic"
@@ -324,7 +375,125 @@ def _llm_classify_relevance(message: str, llm: BaseChatModel) -> tuple[str, bool
         return "on_topic", True
 
 
-def node_check_relevance(state: SafariGuideState, llm: BaseChatModel) -> dict:
+# ── Embedding-based semantic relevance classifier ──────────────────────────────
+# A dynamic middle tier between the free heuristics above and the LLM
+# fallback below: instead of hand-maintaining an ever-growing keyword list
+# to catch every possible phrasing of a real wildlife question (or every
+# possible off-topic one), embed the message and compare it against small
+# curated exemplar clusters using the same local, zero-cost embedding model
+# already loaded for RAG (see rag/factory.py — HuggingFace all-MiniLM-L6-v2,
+# runs on CPU, no network call, normalize_embeddings=True). This generalizes
+# to phrasing the exemplars don't literally contain (e.g. "will it hurt me"
+# scores close to the on-topic cluster despite sharing no words with "does
+# it bite") — something a keyword list structurally cannot do.
+_ON_TOPIC_EXEMPLARS = [
+    "does it bite",
+    "can it swim",
+    "what does it eat",
+    "is it dangerous",
+    "how fast can it run",
+    "where does it sleep",
+    "how big is it",
+    "does it attack humans",
+    "can they climb trees",
+    "is it poisonous or venomous",
+    "how long do they live",
+    "do they hunt in packs",
+    "what is its habitat",
+    "are they endangered",
+    "how do they communicate",
+    "what sound does it make",
+    "is it nocturnal",
+    "how many babies do they have",
+]
+
+_OFF_TOPIC_EXEMPLARS = [
+    "what's the weather like today",
+    "where is my mom",
+    "what time is it",
+    "where's the bathroom",
+    "who is the president",
+    "can you help me with my homework",
+    "what's the wifi password",
+    "how do I get to the hotel",
+    "what's for dinner",
+    "can you recommend a restaurant",
+    "tell me a joke",
+    "what's the capital of France",
+]
+# Deliberately NOT included above: tour-logistics questions ("how much does
+# this tour cost", "can I get a refund") — _RELEVANCE_PROMPT explicitly
+# defines on-topic as "wildlife, animals, nature, OR THE SAFARI TOUR ITSELF",
+# so curating those as off-topic exemplars would contradict the LLM tier's
+# own definition and (since this tier runs BEFORE the LLM and can return a
+# unilateral off_topic verdict) bypass its fail-open safety net entirely.
+
+# Minimum cosine-similarity gap between the closer and farther exemplar
+# cluster for the embedding tier to decide outright. Below this margin the
+# message is genuinely ambiguous, not confidently either — falls through to
+# the LLM instead of trusting a low-confidence embedding call.
+_RELEVANCE_MARGIN = 0.08
+
+# Cached per embeddings-instance (WeakKeyDictionary, not id()-keyed — avoids
+# any risk of a garbage-collected instance's id being reused by an unrelated
+# later instance and serving it stale exemplar vectors from a different
+# embedding space; entries are dropped automatically when the embeddings
+# instance itself is GC'd). The real app constructs exactly one embeddings
+# instance for the process lifetime (see rag/factory.py's init_rag(), never
+# explicitly torn down), so this caches exactly once in production; each
+# test's fake-embeddings instance gets its own independent entry.
+_exemplar_embedding_cache: "weakref.WeakKeyDictionary[Any, dict[str, list[list[float]]]]" = weakref.WeakKeyDictionary()
+
+
+def _get_exemplar_embeddings(embeddings) -> dict[str, list[list[float]]]:
+    if embeddings not in _exemplar_embedding_cache:
+        _exemplar_embedding_cache[embeddings] = {
+            "on_topic":  embeddings.embed_documents(_ON_TOPIC_EXEMPLARS),
+            "off_topic": embeddings.embed_documents(_OFF_TOPIC_EXEMPLARS),
+        }
+    return _exemplar_embedding_cache[embeddings]
+
+
+def _max_cosine_similarity(query_vector: list[float], exemplar_vectors: list[list[float]]) -> float:
+    """Dot product against pre-normalized vectors IS cosine similarity —
+    see rag/factory.py's encode_kwargs={"normalize_embeddings": True}.
+    Raises on a vector-length mismatch rather than letting zip() silently
+    truncate to a plausible-but-wrong score — a misconfigured/swapped
+    embedding backend should surface loudly (caught by the caller's
+    try/except and logged) rather than produce a silently bogus verdict."""
+    for vec in exemplar_vectors:
+        if len(vec) != len(query_vector):
+            raise ValueError(
+                f"embedding dimension mismatch: query has {len(query_vector)}, exemplar has {len(vec)}"
+            )
+    return max(sum(q * e for q, e in zip(query_vector, vec)) for vec in exemplar_vectors)
+
+
+def _embedding_classify_relevance(message: str, embeddings: Any) -> str | None:
+    """
+    Embeds *message* and compares it against the on-topic/off-topic exemplar
+    clusters above. Returns "on_topic"/"off_topic" when one cluster is
+    confidently closer (by at least _RELEVANCE_MARGIN), or None when the
+    message is ambiguous or the embedding call itself fails — callers must
+    fall through to _llm_classify_relevance in either case rather than
+    trusting a low-confidence or missing signal.
+    """
+    try:
+        query_vector = embeddings.embed_query(message)
+        exemplars = _get_exemplar_embeddings(embeddings)
+        on_score  = _max_cosine_similarity(query_vector, exemplars["on_topic"])
+        off_score = _max_cosine_similarity(query_vector, exemplars["off_topic"])
+    except Exception as exc:
+        log.warning("   → embedding relevance classification failed, deferring to LLM: %s", exc)
+        return None
+    if on_score - off_score >= _RELEVANCE_MARGIN:
+        return "on_topic"
+    if off_score - on_score >= _RELEVANCE_MARGIN:
+        return "off_topic"
+    return None
+
+
+def node_check_relevance(state: SafariGuideState, llm: BaseChatModel, embeddings: Any = None) -> dict:
     """
     Gate for text turns only (see route_entry/route_after_relevance in
     graphs.py) — classifies user_message into "on_topic" / "small_talk" /
@@ -333,18 +502,29 @@ def node_check_relevance(state: SafariGuideState, llm: BaseChatModel) -> dict:
 
     Layered cheapest-first so the LLM is only invoked for genuinely
     ambiguous messages. Species mention and wildlife-keyword checks run
-    BEFORE the small-talk check — not after — because _is_small_talk does a
-    contains-anywhere match, and a message like "Hi Baako, what do lions
-    eat?" or "Thanks! What about elephants?" contains a small-talk phrase
-    AND a real question; checking small talk first would skip retrieval for
-    a message that clearly needs it. Small talk only wins when nothing more
-    specific matched first:
+    BEFORE the small-talk check — not after — because a message like "Hi
+    Baako, what do lions eat?" or "Thanks! What about elephants?" contains a
+    small-talk phrase AND a real question; checking small talk first would
+    skip retrieval for a message that clearly needs it.
       1. species-mention match (free) — also resolves which species this
          turn's retrieval should target, overriding identification_result
          for cross-animal follow-ups (see node_retrieve_information)
       2. wildlife-keyword match (free)
-      3. small-talk phrase match (free)
-      4. LLM classification (cheap, rare — see _llm_classify_relevance)
+      3. small-talk phrase match (free) — _is_small_talk requires the
+         ENTIRE message (modulo filler words/punctuation) to be a known
+         phrase, not merely contain one, so "hi, where is my mom?" or "hey,
+         does it bite?" fall through to step 4 rather than being
+         short-circuited to a warm reply that silently skips retrieval.
+      4. embedding similarity vs. curated on-topic/off-topic exemplar
+         clusters (cheap, local, no network call — see
+         _embedding_classify_relevance) — dynamically handles phrasing a
+         fixed keyword list can't enumerate, resolving common follow-ups
+         ("does it bite?", "can it swim?") without an LLM call at all. Only
+         runs when embeddings is provided (None gracefully skips to step 5,
+         e.g. when the retriever backing this graph has no embedding model).
+      5. LLM classification (cheap, rare — see _llm_classify_relevance) for
+         whatever step 4 left ambiguous (or skipped), given session_species
+         as context for pronoun/contextual follow-ups.
     """
     log.info("▶ NODE  check_relevance")
     message = state.get("user_message", "")
@@ -368,10 +548,16 @@ def node_check_relevance(state: SafariGuideState, llm: BaseChatModel) -> dict:
         return {"message_relevance": {"status": "on_topic", "mentioned_species": None, "classification_failed": False}}
 
     if _is_small_talk(message):
-        log.info("   → small_talk (keyword match)")
+        log.info("   → small_talk (phrase match)")
         return {"message_relevance": {"status": "small_talk", "mentioned_species": None, "classification_failed": False}}
 
-    status, failed = _llm_classify_relevance(message, llm)
+    if embeddings is not None:
+        embedded_status = _embedding_classify_relevance(message, embeddings)
+        if embedded_status is not None:
+            log.info("   → %s (embedding similarity)", embedded_status)
+            return {"message_relevance": {"status": embedded_status, "mentioned_species": None, "classification_failed": False}}
+
+    status, failed = _llm_classify_relevance(message, llm, session_species)
     log.info("   → %s (LLM fallback%s)", status, ", classification failed" if failed else "")
     return {"message_relevance": {"status": status, "mentioned_species": None, "classification_failed": failed}}
 

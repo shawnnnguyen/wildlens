@@ -27,7 +27,7 @@ _INDEX: dict[str, dict] | None = None  # lazy singleton, built on first lookup
 # monitor", "python script") — species whose last word falls here get a
 # two-word alias instead (see _derive_alias). Determined by inspecting the
 # actual species_list.json head-noun set, not a general-purpose stopword list.
-_GENERIC_HEAD_NOUNS = {"dog", "ass", "bird", "tree", "monitor", "python"}
+_GENERIC_HEAD_NOUNS = {"dog", "ass", "bird", "tree", "monitor", "python", "roller", "monkey"}
 
 # Common informal short forms that don't derive from any common_name's tail
 # word at all (e.g. "hippo" isn't a substring or suffix of "Hippopotamus")

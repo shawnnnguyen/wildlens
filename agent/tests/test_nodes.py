@@ -18,9 +18,13 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from wildlens.state import MIN_CONFIDENCE, SafariGuideState, WildlifeIdentification
 from wildlens.nodes import (
+    _embedding_classify_relevance,
+    _is_small_talk,
     _is_synthetic_marker,
     _strip_synthetic,
     _to_data_uri,
+    _OFF_TOPIC_EXEMPLARS,
+    _ON_TOPIC_EXEMPLARS,
     node_analyze_image,
     node_check_relevance,
     node_generate_guide_persona,
@@ -254,6 +258,178 @@ def test_check_relevance_species_collision_uses_session_history():
     )
     result = node_check_relevance(state, llm)
     assert result["message_relevance"]["mentioned_species"] == "Grant's Gazelle"
+
+
+def test_check_relevance_pronoun_followup_with_session_species_is_on_topic():
+    """A2: a contextual pronoun follow-up ('can it swim?') with no keyword or
+    alias match must be classified on_topic when session_species is threaded
+    into the LLM fallback, and the prompt sent to the LLM must mention it."""
+    llm = _mock_llm_content("ON_TOPIC")
+    state = _base_state(
+        user_message="can it swim?",
+        identification_history=[{"species": "African Lion (Panthera leo)"}],
+    )
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+    llm.invoke.assert_called_once()
+    prompt_sent = llm.invoke.call_args[0][0][0].content
+    assert "African Lion" in prompt_sent
+
+
+def test_check_relevance_small_talk_with_session_species_defers_to_llm():
+    """A3: 'hey' + a real question ('does it bite?') must not be swallowed
+    as small_talk (which would skip retrieval) — _is_small_talk's strict
+    whole-message matching means this never matches the phrase set at all,
+    so (with no embeddings configured here) it falls through to the
+    context-aware LLM fallback instead of the free small-talk heuristic."""
+    llm = _mock_llm_content("ON_TOPIC")
+    state = _base_state(
+        user_message="hey, does it bite?",
+        identification_history=[{"species": "Nile Crocodile"}],
+    )
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "on_topic"
+    llm.invoke.assert_called_once()
+
+
+def test_check_relevance_bare_pleasantry_with_session_species_still_skips_llm():
+    """Regression guard: a bare pleasantry ('thanks so much!') must stay on
+    the free small-talk fast path even once an animal is already in play
+    this session — identification_history only accumulates and never clears
+    mid-session, so a design that gated the fast path on "is a species in
+    play" would kill it for nearly every turn after the first
+    identification. _is_small_talk's whole-message match (filler words
+    stripped) correctly recognizes this as pure small talk regardless."""
+    llm = MagicMock()
+    state = _base_state(
+        user_message="thanks so much!",
+        identification_history=[{"species": "Nile Crocodile"}],
+    )
+    result = node_check_relevance(state, llm)
+    assert result["message_relevance"]["status"] == "small_talk"
+    llm.invoke.assert_not_called()
+
+
+# ── _is_small_talk (strict whole-message matching) ─────────────────────────────
+
+def test_is_small_talk_matches_bare_phrases_and_filler_variants():
+    assert _is_small_talk("hi") is True
+    assert _is_small_talk("Hey!") is True
+    assert _is_small_talk("thanks so much!") is True
+    assert _is_small_talk("thank you very much") is True
+    assert _is_small_talk("good morning!") is True
+
+
+def test_is_small_talk_rejects_phrase_plus_real_content():
+    """The original gap this whole redesign targets: a greeting/thanks
+    PREFIXING a real (possibly entirely off-topic) question must not count
+    as small talk just because it contains a listed phrase somewhere."""
+    assert _is_small_talk("hi, where is my mom?") is False
+    assert _is_small_talk("hey, does it bite?") is False
+    assert _is_small_talk("hey, what's the weather like?") is False
+
+
+# ── _embedding_classify_relevance ───────────────────────────────────────────────
+
+class _FakeEmbeddings:
+    """Deterministic 2-D embeddings stub standing in for the real local
+    sentence-transformer model (see rag/factory.py) — keeps these tests fast
+    and offline while still exercising the real cosine-similarity/margin
+    logic in _embedding_classify_relevance. All curated exemplar sentences
+    map to a fixed on-topic/off-topic cluster vector by default; specific
+    query texts are overridden via `vectors`."""
+
+    _ON_TOPIC_VECTOR = [1.0, 0.0]
+    _OFF_TOPIC_VECTOR = [0.0, 1.0]
+
+    def __init__(self, vectors: dict[str, list[float]]):
+        self._vectors = vectors
+
+    def _vector_for(self, text: str) -> list[float]:
+        if text in self._vectors:
+            return self._vectors[text]
+        if text in _ON_TOPIC_EXEMPLARS:
+            return self._ON_TOPIC_VECTOR
+        if text in _OFF_TOPIC_EXEMPLARS:
+            return self._OFF_TOPIC_VECTOR
+        raise AssertionError(f"no fake vector configured for {text!r}")
+
+    def embed_query(self, text: str) -> list[float]:
+        return self._vector_for(text)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self._vector_for(t) for t in texts]
+
+
+def test_embedding_classify_relevance_on_topic():
+    embeddings = _FakeEmbeddings({"does it hurt people": [0.9, 0.1]})
+    assert _embedding_classify_relevance("does it hurt people", embeddings) == "on_topic"
+
+
+def test_embedding_classify_relevance_off_topic():
+    embeddings = _FakeEmbeddings({"where can I buy souvenirs": [0.1, 0.9]})
+    assert _embedding_classify_relevance("where can I buy souvenirs", embeddings) == "off_topic"
+
+
+def test_embedding_classify_relevance_ambiguous_returns_none():
+    """Scores too close together (within _RELEVANCE_MARGIN) must defer to
+    the caller's LLM fallback rather than guessing."""
+    embeddings = _FakeEmbeddings({"tell me more": [0.5, 0.5]})
+    assert _embedding_classify_relevance("tell me more", embeddings) is None
+
+
+def test_embedding_classify_relevance_error_returns_none():
+    embeddings = MagicMock()
+    embeddings.embed_query.side_effect = RuntimeError("model not loaded")
+    assert _embedding_classify_relevance("does it bite", embeddings) is None
+
+
+# ── node_check_relevance + embedding tier integration ───────────────────────────
+
+def test_check_relevance_embedding_classifies_common_followup_without_llm():
+    """The embedding tier should resolve a common animal-behavior follow-up
+    on its own, without ever calling the LLM — this is the concrete case
+    that motivated adding this tier: 'does it bite'/'can it swim' are
+    extremely common and shouldn't depend on a non-deterministic LLM call."""
+    llm = MagicMock()
+    embeddings = _FakeEmbeddings({"does it bite": [0.9, 0.1]})
+    state = _base_state(user_message="does it bite")
+    result = node_check_relevance(state, llm, embeddings)
+    assert result["message_relevance"]["status"] == "on_topic"
+    llm.invoke.assert_not_called()
+
+
+def test_check_relevance_greeting_prefixed_off_topic_question_not_small_talk():
+    """'hi, where is my mom?' must not be swallowed as small_talk just
+    because it contains 'hi' — it falls through to the embedding classifier,
+    which (given real off-topic content) correctly says off_topic, without
+    ever needing the LLM."""
+    llm = MagicMock()
+    embeddings = _FakeEmbeddings({"hi, where is my mom?": [0.1, 0.9]})
+    state = _base_state(user_message="hi, where is my mom?")
+    result = node_check_relevance(state, llm, embeddings)
+    assert result["message_relevance"]["status"] == "off_topic"
+    llm.invoke.assert_not_called()
+
+
+def test_check_relevance_embedding_ambiguous_falls_through_to_llm():
+    llm = _mock_llm_content("ON_TOPIC")
+    embeddings = _FakeEmbeddings({"tell me more": [0.5, 0.5]})
+    state = _base_state(user_message="tell me more")
+    result = node_check_relevance(state, llm, embeddings)
+    assert result["message_relevance"]["status"] == "on_topic"
+    llm.invoke.assert_called_once()
+
+
+def test_check_relevance_no_embeddings_falls_through_to_llm_gracefully():
+    """embeddings=None (e.g. the retriever backing this graph has no
+    embedding model configured) must skip the embedding tier without
+    erroring, not crash node_check_relevance."""
+    llm = _mock_llm_content("OFF_TOPIC")
+    state = _base_state(user_message="hi, where is my mom?")
+    result = node_check_relevance(state, llm, embeddings=None)
+    assert result["message_relevance"]["status"] == "off_topic"
+    llm.invoke.assert_called_once()
 
 
 # ── node_topic_redirect_fallback ──────────────────────────────────────────────

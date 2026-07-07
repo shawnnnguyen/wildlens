@@ -95,6 +95,20 @@ def test_find_mentioned_species_python_excluded_as_generic():
     assert find_mentioned_species("what about the rock python?") == "African Rock Python"
 
 
+def test_find_mentioned_species_roller_excluded_as_generic():
+    """'Roller' alone collides with 'roller coaster' — must require the
+    fuller 'lilac-breasted roller' phrase."""
+    assert find_mentioned_species("let's ride the roller coaster") is None
+    assert find_mentioned_species("what's that lilac-breasted roller doing?") == "Lilac-breasted Roller"
+
+
+def test_find_mentioned_species_monkey_excluded_as_generic():
+    """'Monkey' alone collides with idioms like 'monkey business' — must
+    require the fuller 'vervet monkey' phrase."""
+    assert find_mentioned_species("that's just monkey business") is None
+    assert find_mentioned_species("tell me about the vervet monkey") == "Vervet Monkey"
+
+
 def test_find_mentioned_species_collision_prefers_session_history():
     """'Gazelle' is shared by two curated species — must prefer whichever was
     most recently identified this session over an arbitrary default."""
