@@ -10,12 +10,18 @@ _TavilyRetriever          — live web search, tagged source="web" so downstream
 """
 from __future__ import annotations
 
+import datetime
+import logging
+import os
+import threading
 from typing import Any
 
 from langchain_core.callbacks.manager import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
 from langchain_core.retrievers import BaseRetriever
-from pydantic import ConfigDict
+from pydantic import ConfigDict, PrivateAttr
+
+log = logging.getLogger(__name__)
 
 
 class _PineconeRetrieverWrapper(BaseRetriever):
@@ -92,7 +98,37 @@ class _TavilyRetriever(BaseRetriever):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    # In-process daily call cap — bounds Tavily spend regardless of how often
+    # the gating in _EnsembleRetriever decides the local corpus is thin.
+    # Per-process only (not shared across multiple backend workers), same
+    # scope limitation as this codebase's other long-lived singletons (e.g.
+    # MemorySaver) — acceptable for the current single-instance deployment.
+    _call_count: int = PrivateAttr(default=0)
+    _count_date: Any = PrivateAttr(default=None)
+    _count_lock: Any = PrivateAttr(default_factory=threading.Lock)
+
+    def _under_daily_cap(self) -> bool:
+        try:
+            cap = int(os.getenv("TAVILY_DAILY_CALL_CAP", "500"))
+        except ValueError:
+            cap = 500
+        today = datetime.date.today()
+        with self._count_lock:
+            if self._count_date != today:
+                self._count_date = today
+                self._call_count = 0
+            if self._call_count >= cap:
+                return False
+            self._call_count += 1
+            return True
+
     def _to_documents(self, query: str) -> list[Document]:
+        if not self._under_daily_cap():
+            log.warning(
+                "Tavily daily call cap (%s) reached — skipping web search for %r",
+                os.getenv("TAVILY_DAILY_CALL_CAP", "500"), query,
+            )
+            return []
         results = self.client.search(query, max_results=self.k).get("results", [])
         return [
             Document(

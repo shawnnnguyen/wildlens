@@ -5,6 +5,8 @@ without Pinecone, Supabase, or HuggingFace model download.
 """
 from __future__ import annotations
 
+import datetime
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -36,8 +38,8 @@ def _mock_init_rag(**kwargs):
     """Run init_rag() with all external calls stubbed out."""
     with (
         patch("wild_lens.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
-        patch("wild_lens.rag.factory._init_pinecone_retriever", return_value=_NullRetriever()),
-        patch("wild_lens.rag.factory._load_bm25_corpus", return_value=_TEST_CORPUS),
+        patch("wild_lens.rag.factory._init_pinecone_retriever", return_value=(_NullRetriever(), None)),
+        patch("wild_lens.rag.factory._load_bm25_corpus", return_value=(_TEST_CORPUS, None)),
         patch("wild_lens.rag.factory._load_cross_encoder", return_value=None),
     ):
         return init_rag(**kwargs)
@@ -90,6 +92,10 @@ def test_ensemble_retrieve_keeps_multiple_web_docs():
     Regression test: every Tavily Document shares (species=None, section=None,
     source='web'), which used to collapse all web hits from one query into a
     single fused entry and silently drop the rest.
+
+    Patches _local_corpus_is_thin to force the web leg to fire regardless of
+    the gating heuristic (see test_gating_* below) — this test is about the
+    RRF/doc_key fusion logic, not about when Tavily should be invoked.
     """
     web_results = [
         {"content": f"web fact {i}", "url": f"http://x/{i}", "title": f"Page {i}"}
@@ -103,7 +109,8 @@ def test_ensemble_retrieve_keeps_multiple_web_docs():
         weights=[0.5, 0.3, 0.2],
         final_k=10,
     )
-    docs = retriever.invoke("lion facts")
+    with patch.object(_EnsembleRetriever, "_local_corpus_is_thin", return_value=(True, None)):
+        docs = retriever.invoke("lion facts")
     web_contents = {d.page_content for d in docs if d.metadata.get("source") == "web"}
     assert web_contents == {r["content"] for r in web_results}
 
@@ -112,14 +119,148 @@ def test_web_retriever_not_called_twice_on_species_fallback():
     """
     Tavily ignores species filtering, so the species-filtered pass and the
     unfiltered fallback pass in retrieve() must not double up the web call.
+
+    Patches _local_corpus_is_thin to force both fusion passes to consider the
+    web leg worth firing, so this test isolates the web_cache dedup logic
+    from the gating heuristic (see test_gating_* below).
     """
     tavily, client = _make_tavily_stub([])
     bm25 = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
 
     retriever = _EnsembleRetriever(retrievers=[bm25, _NullRetriever(), tavily], weights=[0.5, 0.3, 0.2])
-    retriever.retrieve("some query", species="Nonexistent Species")
+    with patch.object(_EnsembleRetriever, "_local_corpus_is_thin", return_value=(True, None)):
+        retriever.retrieve("some query", species="Nonexistent Species")
 
     assert client.search.call_count == 1
+
+
+# ── Dynamic Search gating: only pay for Tavily when the local corpus is thin ─
+
+def test_gating_skips_web_when_local_corpus_has_docs():
+    """No cross-encoder loaded yet; BM25 already returns non-empty results for
+    a well-matched query — Tavily must not be called at all."""
+    tavily, client = _make_tavily_stub([{"content": "web fact", "url": "http://x", "title": "t"}])
+    bm25 = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
+
+    retriever = _EnsembleRetriever(retrievers=[bm25, _NullRetriever(), tavily], weights=[0.5, 0.3, 0.2])
+    retriever.invoke("lion facts")
+
+    assert client.search.call_count == 0
+
+
+def test_gating_fires_web_when_local_corpus_empty():
+    """No local retrievers can answer at all — Tavily must fire."""
+    tavily, client = _make_tavily_stub([{"content": "web fact", "url": "http://x", "title": "t"}])
+
+    retriever = _EnsembleRetriever(retrievers=[_NullRetriever(), tavily], weights=[0.5, 0.2])
+    retriever.invoke("some obscure query")
+
+    assert client.search.call_count == 1
+
+
+def test_gating_uses_cross_encoder_score_not_rrf_rank():
+    """
+    RRF scores alone can't signal relevance (pure rank function) — once the
+    cross-encoder is loaded, gating must key off its (query, doc) score
+    instead. Local docs exist and rank fine in RRF, but a cross-encoder that
+    scores everything below rerank_threshold means the local corpus is
+    genuinely a poor match, so Tavily should still fire.
+    """
+    tavily, client = _make_tavily_stub([{"content": "web fact", "url": "http://x", "title": "t"}])
+    bm25 = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
+    fake_ce = MagicMock()
+    fake_ce.predict.side_effect = lambda pairs: [-5.0] * len(pairs)
+
+    retriever = _EnsembleRetriever(
+        retrievers=[bm25, _NullRetriever(), tavily], weights=[0.5, 0.3, 0.2],
+        cross_encoder=fake_ce, rerank_threshold=0.0,
+    )
+    retriever.invoke("lion facts")
+
+    assert client.search.call_count == 1
+
+
+# ── Knowledge Base Enrichment: web facts written back to Supabase/Pinecone ──
+
+def test_enrich_async_noop_without_deps():
+    """enrich_async must no-op (not raise) when Supabase/Pinecone/embeddings
+    weren't wired in — e.g. local dev without those services configured."""
+    bm25 = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
+    retriever = _EnsembleRetriever(retrievers=[bm25], weights=[1.0])
+
+    result = retriever.enrich_async(species="Lion", section="diet", content="Lions eat meat")
+
+    assert result is None
+    assert retriever._enrichment_executor is None
+
+
+def test_enrich_async_writes_to_supabase_and_pinecone():
+    bm25 = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
+    store = MagicMock()
+    store.get_species_id.return_value = 1
+    pinecone_index = MagicMock()
+    embeddings = MagicMock()
+    embeddings.embed_query.return_value = [0.0] * 384
+
+    retriever = _EnsembleRetriever(
+        retrievers=[bm25], weights=[1.0],
+        supabase_store=store, pinecone_index=pinecone_index, embeddings=embeddings,
+    )
+
+    retriever.enrich_async(species="Lion", section="diet", content="Lions eat meat").result()
+
+    store.upsert_document.assert_called_once_with(
+        species_id=1, section="diet", content="Lions eat meat", source="web_enriched",
+    )
+    pinecone_index.upsert.assert_called_once()
+    assert pinecone_index.upsert.call_args.kwargs["namespace"] == "web_cache"
+
+
+def test_enrich_async_skips_write_for_unknown_species():
+    """Never persist an enrichment fact for a species not already in the
+    curated corpus — there's no species_id to attach it to."""
+    bm25 = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
+    store = MagicMock()
+    store.get_species_id.return_value = None
+    pinecone_index = MagicMock()
+    embeddings = MagicMock()
+
+    retriever = _EnsembleRetriever(
+        retrievers=[bm25], weights=[1.0],
+        supabase_store=store, pinecone_index=pinecone_index, embeddings=embeddings,
+    )
+
+    retriever.enrich_async(species="Unknown Critter", section="diet", content="...").result()
+
+    store.upsert_document.assert_not_called()
+    pinecone_index.upsert.assert_not_called()
+
+
+def test_enrich_async_debounces_bm25_rebuild():
+    """BM25 is rebuilt-and-swapped only after enrichment_rebuild_every writes,
+    not on every single enrichment — avoids rebuilding the corpus per-call."""
+    bm25 = BM25Retriever.from_documents(_TEST_CORPUS, k=5)
+    store = MagicMock()
+    store.get_species_id.return_value = 1
+    store.load_all_documents.return_value = _TEST_CORPUS
+    pinecone_index = MagicMock()
+    embeddings = MagicMock()
+    embeddings.embed_query.return_value = [0.0] * 384
+
+    retriever = _EnsembleRetriever(
+        retrievers=[bm25], weights=[1.0],
+        supabase_store=store, pinecone_index=pinecone_index, embeddings=embeddings,
+        enrichment_rebuild_every=2,
+    )
+
+    retriever.enrich_async(species="Lion", section="diet", content="fact one").result()
+    assert store.load_all_documents.call_count == 0
+    assert retriever.retrievers[0] is bm25
+
+    retriever.enrich_async(species="Lion", section="habitat", content="fact two").result()
+    assert store.load_all_documents.call_count == 1
+    assert isinstance(retriever.retrievers[0], BM25Retriever)
+    assert retriever.retrievers[0] is not bm25  # atomically swapped for a fresh instance
 
 
 # ── Bug #8: ThreadPoolExecutor is created once and reused ───────────────────
@@ -174,8 +315,8 @@ def _mock_init_rag_no_reranker_patch(**kwargs):
     can control it themselves for background-loading tests."""
     with (
         patch("wild_lens.rag.factory.HuggingFaceEmbeddings", return_value=MagicMock()),
-        patch("wild_lens.rag.factory._init_pinecone_retriever", return_value=_NullRetriever()),
-        patch("wild_lens.rag.factory._load_bm25_corpus", return_value=_TEST_CORPUS),
+        patch("wild_lens.rag.factory._init_pinecone_retriever", return_value=(_NullRetriever(), None)),
+        patch("wild_lens.rag.factory._load_bm25_corpus", return_value=(_TEST_CORPUS, None)),
     ):
         return init_rag(**kwargs)
 
@@ -205,3 +346,73 @@ def test_cross_encoder_becomes_active_after_background_load_completes():
         retriever = _mock_init_rag_no_reranker_patch(use_reranker=True)
 
     assert retriever.cross_encoder is fake_model
+
+
+# ── Tavily daily call cap ─────────────────────────────────────────────────────
+
+def test_tavily_daily_cap_blocks_after_limit():
+    client = MagicMock()
+    client.search.return_value = {"results": [{"content": "x", "url": "http://x", "title": "t"}]}
+    tavily = _TavilyRetriever(client=client, k=1)
+
+    with patch.dict(os.environ, {"TAVILY_DAILY_CALL_CAP": "2"}):
+        tavily.invoke("q1")
+        tavily.invoke("q2")
+        docs = tavily.invoke("q3")
+
+    assert client.search.call_count == 2
+    assert docs == []
+
+
+def test_tavily_daily_cap_resets_next_day():
+    client = MagicMock()
+    client.search.return_value = {"results": [{"content": "x", "url": "http://x", "title": "t"}]}
+    tavily = _TavilyRetriever(client=client, k=1)
+
+    with patch.dict(os.environ, {"TAVILY_DAILY_CALL_CAP": "1"}):
+        tavily.invoke("q1")
+        assert tavily.invoke("q2") == []  # cap hit for today
+
+        tomorrow = datetime.date.today() + datetime.timedelta(days=1)
+        with patch("wild_lens.rag.backends.datetime") as mock_dt:
+            mock_dt.date.today.return_value = tomorrow
+            tavily.invoke("q3")
+
+    assert client.search.call_count == 2
+
+
+def test_tavily_daily_cap_malformed_env_var_falls_back_to_default():
+    """A non-integer TAVILY_DAILY_CALL_CAP must not crash retrieval — fall
+    back to the default cap instead of raising ValueError on every call."""
+    client = MagicMock()
+    client.search.return_value = {"results": []}
+    tavily = _TavilyRetriever(client=client, k=1)
+
+    with patch.dict(os.environ, {"TAVILY_DAILY_CALL_CAP": "not-a-number"}):
+        tavily.invoke("q1")  # must not raise
+
+    assert client.search.call_count == 1
+
+
+# ── web_cache Pinecone namespace wiring ───────────────────────────────────────
+
+def test_init_web_cache_retriever_returns_none_without_pinecone_index():
+    """No Pinecone index means no namespace to build a web_cache retriever on
+    top of — must degrade to None (excluded from the ensemble) rather than error."""
+    from wild_lens.rag.factory import _init_web_cache_retriever
+
+    assert _init_web_cache_retriever(MagicMock(), None, k=5) is None
+
+
+def test_init_web_cache_retriever_wraps_web_cache_namespace():
+    from wild_lens.rag import _PineconeRetrieverWrapper
+    from wild_lens.rag.factory import _init_web_cache_retriever
+
+    fake_index = MagicMock()
+    with patch("langchain_pinecone.PineconeVectorStore") as mock_vs:
+        mock_vs.return_value = MagicMock()
+        retriever = _init_web_cache_retriever(MagicMock(), fake_index, k=5)
+
+    assert isinstance(retriever, _PineconeRetrieverWrapper)
+    mock_vs.assert_called_once()
+    assert mock_vs.call_args.kwargs["namespace"] == "web_cache"
