@@ -9,6 +9,8 @@ Node inventory
 ──────────────
 node_analyze_image         multimodal Gemini vision call → WildlifeIdentification
 node_unclear_photo_fallback polite retry prompt when confidence < MIN_CONFIDENCE
+node_check_relevance       text-turn gate → on_topic / small_talk / off_topic
+node_topic_redirect_fallback zero-cost redirect when check_relevance says off_topic
 node_retrieve_information  hybrid RAG search → retrieved_facts
 node_summarize_history     compresses old chat_history → conversation_summary
 node_generate_guide_persona Baako persona script generation
@@ -26,7 +28,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from .data.species_lookup import canonical_common_name, ground_truth_threat_level
+from .data.species_lookup import canonical_common_name, find_mentioned_species, ground_truth_threat_level
 from .rag import _EnsembleRetriever
 from .state import MIN_CONFIDENCE, SUMMARY_THRESHOLD, SafariGuideState, WildlifeIdentification
 from .tts import synthesise_audio
@@ -228,6 +230,170 @@ def node_unclear_photo_fallback(state: SafariGuideState) -> dict:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# NODE — Check message relevance (text turns only)
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Generic wildlife/safari vocabulary — a match here (without a specific
+# species mention) is enough to treat a message as on_topic without paying
+# for the LLM fallback below. Word-boundary matched, not substring (see
+# _contains_any_word) — a naive substring check would false-positive on
+# unrelated text purely by bad luck (e.g. "hi" inside "this").
+_WILDLIFE_KEYWORDS = {
+    "diet", "eat", "eats", "eating", "feed", "feeding", "prey", "predator",
+    "predators", "habitat", "territory", "nocturnal", "diurnal", "hunt",
+    "hunts", "hunting", "hunter", "dangerous", "danger", "threat",
+    "threatened", "endangered", "conservation", "extinct", "extinction",
+    "pack", "herd", "pride", "migration", "migrate", "safari", "animal",
+    "animals", "wildlife", "species", "speed", "lifespan", "weight", "size",
+    "camouflage", "breed", "breeding", "mate", "mating", "cub", "cubs",
+    "calf", "calves", "sleep", "sleeps", "active", "nest", "nesting",
+    "poaching", "savanna", "savannah", "serengeti", "tour", "guide",
+}
+
+# Small talk directed at Baako personally — treated as its own bucket (not
+# folded into on_topic) so it can skip retrieve_information entirely; see
+# node_check_relevance and route_after_relevance in graphs.py.
+_SMALL_TALK_PHRASES = {
+    "hi", "hello", "hey", "thanks", "thank you", "bye", "goodbye",
+    "good morning", "good afternoon", "good evening", "how are you",
+}
+
+
+def _contains_any_word(text: str, phrases: set[str]) -> bool:
+    """
+    Word-boundary match against any phrase in *phrases* (case-insensitive).
+    Deliberately not substring matching — see find_mentioned_species's
+    docstring for why that's unsafe (e.g. "ass" inside "password").
+    """
+    lowered = text.lower()
+    return any(re.search(rf"\b{re.escape(phrase)}\b", lowered) for phrase in phrases)
+
+
+def _is_small_talk(text: str) -> bool:
+    return _contains_any_word(text, _SMALL_TALK_PHRASES)
+
+
+def _is_wildlife_related(text: str) -> bool:
+    return _contains_any_word(text, _WILDLIFE_KEYWORDS)
+
+
+_RELEVANCE_PROMPT = (
+    "You are a strict binary classifier for a wildlife safari guide chatbot. "
+    "Decide whether the following visitor message is about wildlife, animals, "
+    "nature, or the safari tour itself, or whether it is completely unrelated "
+    "(e.g. technical support, general trivia, unrelated requests).\n\n"
+    "Reply with exactly one word: ON_TOPIC or OFF_TOPIC.\n\n"
+    "Message: {message}"
+)
+
+
+def _llm_classify_relevance(message: str, llm: BaseChatModel) -> tuple[str, bool]:
+    """
+    Cheap LLM fallback for messages the free heuristics above can't classify.
+
+    Returns (status, classification_failed). Fails OPEN (status="on_topic")
+    on any API error, empty response, or a reply that doesn't clearly start
+    with "OFF" — a wasted RAG+generation call on a rare weird message is
+    cheaper than wrongly refusing a legitimate wildlife question. Returns
+    classification_failed=True only on an actual error (not a merely-unclear
+    reply) so a persistently broken classifier is observable via
+    message_relevance rather than silently defaulting open forever with no
+    signal that the gate has effectively stopped doing anything.
+    """
+    try:
+        response = llm.invoke([HumanMessage(content=_RELEVANCE_PROMPT.format(message=message))])
+        content = (response.content or "").strip()
+        first_token = content.split()[0].upper() if content else ""
+        status = "off_topic" if first_token.startswith("OFF") else "on_topic"
+        return status, False
+    except Exception as exc:
+        log.warning("   → relevance classification failed, defaulting to on_topic: %s", exc)
+        return "on_topic", True
+
+
+def node_check_relevance(state: SafariGuideState, llm: BaseChatModel) -> dict:
+    """
+    Gate for text turns only (see route_entry/route_after_relevance in
+    graphs.py) — classifies user_message into "on_topic" / "small_talk" /
+    "off_topic" before any RAG retrieval or persona generation is attempted,
+    so a nonsense or off-topic message doesn't pay for either.
+
+    Layered cheapest-first so the LLM is only invoked for genuinely
+    ambiguous messages. Species mention and wildlife-keyword checks run
+    BEFORE the small-talk check — not after — because _is_small_talk does a
+    contains-anywhere match, and a message like "Hi Baako, what do lions
+    eat?" or "Thanks! What about elephants?" contains a small-talk phrase
+    AND a real question; checking small talk first would skip retrieval for
+    a message that clearly needs it. Small talk only wins when nothing more
+    specific matched first:
+      1. species-mention match (free) — also resolves which species this
+         turn's retrieval should target, overriding identification_result
+         for cross-animal follow-ups (see node_retrieve_information)
+      2. wildlife-keyword match (free)
+      3. small-talk phrase match (free)
+      4. LLM classification (cheap, rare — see _llm_classify_relevance)
+    """
+    log.info("▶ NODE  check_relevance")
+    message = state.get("user_message", "")
+
+    # Most-recent-first, canonicalized — used to break ties when a message
+    # mentions an ambiguous alias shared by more than one curated species
+    # (e.g. "gazelle" -> Thomson's/Grant's) — see find_mentioned_species.
+    session_species: list[str] = []
+    for h in reversed(state.get("identification_history", [])):
+        canon = canonical_common_name(h.get("species", ""))
+        if canon and canon not in session_species:
+            session_species.append(canon)
+
+    mentioned = find_mentioned_species(message, session_species)
+    if mentioned:
+        log.info("   → on_topic (mentions %s)", mentioned)
+        return {"message_relevance": {"status": "on_topic", "mentioned_species": mentioned, "classification_failed": False}}
+
+    if _is_wildlife_related(message):
+        log.info("   → on_topic (wildlife keyword match)")
+        return {"message_relevance": {"status": "on_topic", "mentioned_species": None, "classification_failed": False}}
+
+    if _is_small_talk(message):
+        log.info("   → small_talk (keyword match)")
+        return {"message_relevance": {"status": "small_talk", "mentioned_species": None, "classification_failed": False}}
+
+    status, failed = _llm_classify_relevance(message, llm)
+    log.info("   → %s (LLM fallback%s)", status, ", classification failed" if failed else "")
+    return {"message_relevance": {"status": status, "mentioned_species": None, "classification_failed": failed}}
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# NODE — Topic redirect fallback
+# ══════════════════════════════════════════════════════════════════════════════
+
+def node_topic_redirect_fallback(state: SafariGuideState) -> dict:
+    """
+    Reached when node_check_relevance classifies the message as off_topic.
+
+    Sets final_script so the graph always returns text on this path too.
+    Does NOT call the LLM — zero token cost, mirrors
+    node_unclear_photo_fallback exactly. Routes straight to the audio gate
+    (see graphs.py) rather than through generate_guide_persona, so this
+    final_script is never overwritten.
+    """
+    log.info("▶ NODE  topic_redirect_fallback")
+    message = (
+        "Ha, that one's outside my wheelhouse! Out here I'm all about the "
+        "wildlife — ask me about an animal we've spotted, or point your "
+        "camera at something and I'll tell you all about it."
+    )
+    return {
+        "final_script":  message,
+        "error_message": "off_topic",
+        "chat_history":  [
+            HumanMessage(content=state.get("user_message", "")),
+            AIMessage(content=message),
+        ],
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # NODE 3 — RAG retrieval
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -243,13 +409,24 @@ def node_retrieve_information(
     just the species name, since that's the biographical info the persona
     node is expected to lead with and the curated corpus has no dedicated
     field for it — see node_generate_guide_persona.
+
+    Species resolution prefers message_relevance.mentioned_species (set by
+    node_check_relevance when the current text message names a specific
+    animal) over identification_result — otherwise a mid-session pivot
+    ("we're discussing a lion, tourist asks about elephants") would keep
+    retrieving/filtering on the previously-identified animal instead of the
+    one actually being asked about.
     """
     log.info("▶ NODE  retrieve_information")
-    species     = state.get("identification_result", {}).get("species", "")
-    # Canonicalize against species_list.json first so casing/whitespace drift in
-    # Gemini's freeform output doesn't silently drop the species filter (falls
-    # back to the naive split for genuinely unlisted/novel species — see #10).
-    common_name = (canonical_common_name(species) if species else None) or species.split("(")[0].strip()
+    mentioned_species = state.get("message_relevance", {}).get("mentioned_species")
+    if mentioned_species:
+        common_name = mentioned_species
+    else:
+        species     = state.get("identification_result", {}).get("species", "")
+        # Canonicalize against species_list.json first so casing/whitespace drift in
+        # Gemini's freeform output doesn't silently drop the species filter (falls
+        # back to the naive split for genuinely unlisted/novel species — see #10).
+        common_name = (canonical_common_name(species) if species else None) or species.split("(")[0].strip()
     follow_up   = state.get("user_message", "")
     if follow_up:
         query = f"{common_name} {follow_up}".strip()

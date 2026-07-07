@@ -49,6 +49,15 @@ class SafariGuideState(TypedDict):
                                   # node_unclear_photo_fallback — never identification_result,
                                   # so a low-confidence/failed photo can't clobber the last
                                   # confidently-identified animal.
+    message_relevance:      dict  # reset to {} each turn; written by node_check_relevance for
+                                  # text turns only. Keys: "status" ("on_topic" | "small_talk" |
+                                  # "off_topic"), "mentioned_species" (canonical common_name if
+                                  # the message names a specific animal, overriding
+                                  # identification_result's species for this turn's retrieval —
+                                  # see node_retrieve_information), "classification_failed"
+                                  # (True if the LLM fallback layer errored and this turn
+                                  # defaulted open to "on_topic" — surfaced so a persistently
+                                  # broken classifier is observable, not silently no-op).
 
     # ── Conversation memory (restored by checkpointer between turns) ──────────
     chat_history:           Annotated[list[BaseMessage], add_messages]

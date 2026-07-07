@@ -70,3 +70,49 @@ def test_confident_photo_routes_through_persona_with_no_safety_alert():
 
     llm_text.invoke.assert_called()  # persona (and summarize/retrieve) now run for photo turns
     assert "SAFETY ALERT" not in result["final_script"]
+
+
+def test_off_topic_text_turn_never_reaches_persona_llm():
+    """The off_topic branch must go straight to the zero-token redirect —
+    llm_text.invoke should be called exactly once (the relevance
+    classification itself), never a second time for persona generation."""
+    graph, llm_vision, llm_text = _build_test_graph()
+    llm_text.invoke.return_value = MagicMock(content="OFF_TOPIC")
+
+    result = graph.invoke(
+        make_turn_input(user_message="what's the wifi password"),
+        config={"configurable": {"thread_id": "test-off-topic"}},
+    )
+
+    assert result["error_message"] == "off_topic"
+    assert llm_text.invoke.call_count == 1
+
+
+def test_small_talk_text_turn_skips_retrieval():
+    """Small talk should reach persona generation directly, without paying
+    for a RAG retrieval call."""
+    graph, llm_vision, llm_text = _build_test_graph()
+    llm_text.invoke.return_value = MagicMock(content="You're welcome!")
+
+    with patch.object(_EnsembleRetriever, "retrieve") as mock_retrieve:
+        graph.invoke(
+            make_turn_input(user_message="thanks!"),
+            config={"configurable": {"thread_id": "test-small-talk"}},
+        )
+
+    mock_retrieve.assert_not_called()
+    llm_text.invoke.assert_called()  # persona still generates a reply
+
+
+def test_on_topic_text_turn_still_retrieves():
+    graph, llm_vision, llm_text = _build_test_graph()
+    llm_text.invoke.return_value = MagicMock(content="Lions are apex predators.")
+
+    with patch.object(_EnsembleRetriever, "retrieve", return_value=[]) as mock_retrieve:
+        result = graph.invoke(
+            make_turn_input(user_message="what do predators eat around here?"),
+            config={"configurable": {"thread_id": "test-on-topic"}},
+        )
+
+    mock_retrieve.assert_called_once()
+    assert result["error_message"] != "off_topic"

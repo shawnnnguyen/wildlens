@@ -30,13 +30,18 @@ START
         │                                     │
         │                                    END
         │
-        └─[user_message set]──► summarize_history
+        └─[user_message set]──► check_relevance
                                        │
-                               retrieve_information
-                                       │
-                               generate_guide_persona
-                                       │
-                                 route_audio → …
+                     ┌─────────────────┼──────────────────────┐
+                     │ off_topic       │ small_talk            │ on_topic
+                     ▼                 ▼                       ▼
+           topic_redirect_fallback  generate_guide_persona   summarize_history
+                     │              (skips retrieve_info)         │
+                route_audio               │                retrieve_information
+                     │                route_audio                 │
+                    ...                   │              generate_guide_persona
+                                          ...                      │
+                                                              route_audio → …
 """
 from __future__ import annotations
 
@@ -48,6 +53,8 @@ from langchain_core.retrievers import BaseRetriever
 from .state import MIN_CONFIDENCE, SafariGuideState
 from .nodes import (
     node_analyze_image,
+    node_check_relevance,
+    node_topic_redirect_fallback,
     node_unclear_photo_fallback,
     node_retrieve_information,
     node_summarize_history,
@@ -59,10 +66,11 @@ from .nodes import (
 # ── Routing functions ─────────────────────────────────────────────────────────
 
 def route_entry(state: SafariGuideState) -> str:
-    """Route to image analysis if a new photo is provided; otherwise go to summarise."""
+    """Route to image analysis if a new photo is provided; otherwise gate the
+    text message through check_relevance before summarise/retrieve/persona."""
     if state.get("image_path", "").strip():
         return "analyze_image"
-    return "summarize_history"
+    return "check_relevance"
 
 
 def route_after_analysis(state: SafariGuideState) -> str:
@@ -73,6 +81,25 @@ def route_after_analysis(state: SafariGuideState) -> str:
         "unclear_photo_fallback" if confidence < MIN_CONFIDENCE
         else "summarize_history"
     )
+
+
+def route_after_relevance(state: SafariGuideState) -> str:
+    """
+    Route based on node_check_relevance's verdict:
+      off_topic  -> a zero-cost templated redirect, never through persona
+      small_talk -> straight to persona generation, skipping
+                    summarize_history/retrieve_information entirely (a
+                    greeting/thanks doesn't need RAG context, and this
+                    avoids paying for a retrieval — including a possible
+                    Tavily call — on a message with nothing to retrieve)
+      on_topic   -> the normal summarise -> retrieve -> persona path
+    """
+    status = state.get("message_relevance", {}).get("status", "on_topic")
+    if status == "off_topic":
+        return "topic_redirect_fallback"
+    if status == "small_talk":
+        return "generate_guide_persona"
+    return "summarize_history"
 
 
 def route_audio(state: SafariGuideState) -> str:
@@ -108,10 +135,11 @@ def build_graph(
     """
 
     # Bind dependencies without globals
-    def _analyze(s):   return node_analyze_image(s, llm_vision)
-    def _retrieve(s):  return node_retrieve_information(s, retriever)
-    def _summarize(s): return node_summarize_history(s, llm_text)
-    def _persona(s):   return node_generate_guide_persona(s, llm_text)
+    def _analyze(s):         return node_analyze_image(s, llm_vision)
+    def _check_relevance(s): return node_check_relevance(s, llm_text)
+    def _retrieve(s):        return node_retrieve_information(s, retriever)
+    def _summarize(s):       return node_summarize_history(s, llm_text)
+    def _persona(s):         return node_generate_guide_persona(s, llm_text)
     _audio = node_generate_audio
 
     if tracing_enabled:
@@ -124,6 +152,8 @@ def build_graph(
     # ── Register nodes ────────────────────────────────────────────────────────
     g.add_node("analyze_image",           _analyze)
     g.add_node("unclear_photo_fallback",  node_unclear_photo_fallback)
+    g.add_node("check_relevance",         _check_relevance)
+    g.add_node("topic_redirect_fallback", node_topic_redirect_fallback)
     g.add_node("summarize_history",       _summarize)
     g.add_node("retrieve_information",    _retrieve)
     g.add_node("generate_guide_persona",  _persona)
@@ -135,7 +165,7 @@ def build_graph(
         route_entry,
         {
             "analyze_image":    "analyze_image",
-            "summarize_history": "summarize_history",
+            "check_relevance":  "check_relevance",
         },
     )
 
@@ -154,6 +184,32 @@ def build_graph(
     # by a fabricated LLM narration of a low-confidence guess.
     g.add_conditional_edges(
         "unclear_photo_fallback",
+        route_audio,
+        {
+            "generate_audio": "generate_audio",
+            END:               END,
+        },
+    )
+
+    # ── After relevance check: off_topic / small_talk / on_topic ──────────────
+    # off_topic goes straight to a zero-token templated redirect (mirrors the
+    # unclear_photo_fallback pattern above); small_talk skips straight to
+    # persona generation (no RAG context needed for "thanks!"); only on_topic
+    # pays for the full summarise -> retrieve -> persona pipeline.
+    g.add_conditional_edges(
+        "check_relevance",
+        route_after_relevance,
+        {
+            "topic_redirect_fallback": "topic_redirect_fallback",
+            "generate_guide_persona":  "generate_guide_persona",
+            "summarize_history":       "summarize_history",
+        },
+    )
+
+    # ── Off-topic fallback: straight to the audio gate, never through persona —
+    # same reasoning as unclear_photo_fallback above.
+    g.add_conditional_edges(
+        "topic_redirect_fallback",
         route_audio,
         {
             "generate_audio": "generate_audio",
@@ -203,4 +259,5 @@ def make_turn_input(
         "retrieved_facts":   "",
         "error_message":     "",
         "current_analysis":  {},
+        "message_relevance": {},
     }
