@@ -29,6 +29,7 @@ backend/static/audio/
 
 # Agent skills (installed locally via `npx skills add`)
 .agents/
+skills-lock.json
 
 # OS
 .DS_Store
