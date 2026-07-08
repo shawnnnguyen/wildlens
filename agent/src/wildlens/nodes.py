@@ -65,6 +65,33 @@ _BAAKO_SYSTEM = SystemMessage(content=(
     "Aim for 140–220 words (60–90 seconds spoken at a natural pace)."
 ))
 
+# ── node_generate_guide_persona: per-turn task templates ───────────────────────
+# The two shapes node_generate_guide_persona can produce for its task message —
+# extracted from inline if/else branches so the interpolated skeleton is named
+# and readable independent of the (still Python-level) intro-vs-follow-up choice.
+_PERSONA_FOLLOWUP_TASK_TEMPLATE = (
+    "The tourist is asking: \"{follow_up}\"\n\n"
+    "Relevant facts (Guidebook = vetted internal data; Web = live search, "
+    "supplementary only — prefer Guidebook on conflict, especially for "
+    "safety/danger information):\n{facts}{animals_digest}\n\n"
+    "Answer as Baako. If the question refers to a previous animal, "
+    "use the session memory and animals list above."
+)
+
+_PERSONA_INTRO_TASK_TEMPLATE = (
+    "You have just spotted a {species}! "
+    "{binomial_line}"
+    "Observable traits: {trait_line}.\n\n"
+    "Verified facts (Guidebook = vetted internal data; Web = live search, "
+    "supplementary only — prefer Guidebook on conflict):\n{facts}{animals_digest}\n\n"
+    "Generate an audio tour-guide script as Baako introducing this animal. "
+    "Clearly state its common name, genus, and species. Then highlight its "
+    "circadian rhythm (when it's active) and its diet, drawing only from the "
+    "facts above. If the facts above don't cover its circadian rhythm or diet, "
+    "say so briefly and respectfully — apologize that this specific detail "
+    "isn't available yet rather than guessing or inventing it."
+)
+
 
 # ── Image encoding helper ─────────────────────────────────────────────────────
 
@@ -870,13 +897,8 @@ def node_generate_guide_persona(
 
     # ── Build the task message for this specific turn ─────────────────────────
     if follow_up:
-        task = HumanMessage(content=(
-            f"The tourist is asking: \"{follow_up}\"\n\n"
-            f"Relevant facts (Guidebook = vetted internal data; Web = live search, "
-            f"supplementary only — prefer Guidebook on conflict, especially for "
-            f"safety/danger information):\n{facts}{animals_digest}\n\n"
-            "Answer as Baako. If the question refers to a previous animal, "
-            "use the session memory and animals list above."
+        task = HumanMessage(content=_PERSONA_FOLLOWUP_TASK_TEMPLATE.format(
+            follow_up=follow_up, facts=facts, animals_digest=animals_digest,
         ))
     else:
         trait_line  = ", ".join(traits) if traits else "its distinctive features"
@@ -884,18 +906,9 @@ def node_generate_guide_persona(
             f"Genus: {genus}. Species: {species_epithet}.\n"
             if genus and species_epithet else ""
         )
-        task = HumanMessage(content=(
-            f"You have just spotted a {species}! "
-            f"{binomial_line}"
-            f"Observable traits: {trait_line}.\n\n"
-            f"Verified facts (Guidebook = vetted internal data; Web = live search, "
-            f"supplementary only — prefer Guidebook on conflict):\n{facts}{animals_digest}\n\n"
-            "Generate an audio tour-guide script as Baako introducing this animal. "
-            "Clearly state its common name, genus, and species. Then highlight its "
-            "circadian rhythm (when it's active) and its diet, drawing only from the "
-            "facts above. If the facts above don't cover its circadian rhythm or diet, "
-            "say so briefly and respectfully — apologize that this specific detail "
-            "isn't available yet rather than guessing or inventing it."
+        task = HumanMessage(content=_PERSONA_INTRO_TASK_TEMPLATE.format(
+            species=species, binomial_line=binomial_line, trait_line=trait_line,
+            facts=facts, animals_digest=animals_digest,
         ))
 
     messages = [_BAAKO_SYSTEM] + context_msgs + [task]

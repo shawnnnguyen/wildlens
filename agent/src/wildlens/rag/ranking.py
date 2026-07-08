@@ -114,6 +114,12 @@ class _EnsembleRetriever(BaseRetriever):
     embeddings: Any | None = None
     enrichment_rebuild_every: int = 10
 
+    # Opt-in retrieval-result cache — None (the default, and what every
+    # existing test uses) disables caching entirely so retrieve() behaves
+    # exactly as before. See _get_cache()/retrieve() for the caching path.
+    cache_dir: str | None = None
+    cache_ttl_seconds: int = 6 * 60 * 60  # 6h backstop — see _cache_key() docstring
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
     # Lazily created and reused across retrieve() calls — this retriever is a
@@ -133,6 +139,13 @@ class _EnsembleRetriever(BaseRetriever):
     _enrichment_executor_lock: Any = PrivateAttr(default_factory=threading.Lock)
     _pending_enrichments: int = PrivateAttr(default=0)
 
+    # Retrieval-result cache (lazily opened — see _get_cache()) and the
+    # version counter it's keyed on. Bumped once per successful enrichment
+    # write (not just per BM25 rebuild) — see _write_enrichment().
+    _cache: Any | None = PrivateAttr(default=None)
+    _cache_lock: Any = PrivateAttr(default_factory=threading.Lock)
+    _corpus_version: int = PrivateAttr(default=0)
+
     def _get_executor(self) -> ThreadPoolExecutor:
         # Double-checked locking: the common case (already created) reads
         # `_executor` lock-free; only the first caller(s) racing to create it
@@ -151,6 +164,38 @@ class _EnsembleRetriever(BaseRetriever):
                 if self._enrichment_executor is None:
                     self._enrichment_executor = ThreadPoolExecutor(max_workers=1)
         return self._enrichment_executor
+
+    def _get_cache(self):
+        """
+        Lazily open the on-disk cache, or None if caching is disabled
+        (cache_dir unset — the default, and what every existing test uses,
+        so this is a strict opt-in with zero effect on current behavior).
+        """
+        if self.cache_dir is None:
+            return None
+        if self._cache is None:
+            with self._cache_lock:
+                if self._cache is None:
+                    import diskcache
+                    self._cache = diskcache.Cache(self.cache_dir)
+        return self._cache
+
+    def _cache_key(self, query: str, species: str | None) -> tuple:
+        """
+        Cache key dimensions, each closing a staleness gap found during design
+        review:
+          - normalized query + species: the obvious dimensions.
+          - corpus_version: bumped once per successful enrichment write (see
+            _write_enrichment) so a newly-enriched fact isn't masked by a
+            stale cached miss/thin result.
+          - cross_encoder is not None: the cross-encoder loads asynchronously
+            in the background after startup (factory.py's
+            _load_cross_encoder_async) and materially changes both ranking
+            and Tavily gating (_local_corpus_is_thin) once it's ready — a
+            result cached during the pre-load window must not be served
+            after the encoder comes online.
+        """
+        return (query.strip().lower(), species, self._corpus_version, self.cross_encoder is not None)
 
     def enrich_async(
         self, species: str, section: str, content: str, source_url: str = "", title: str = "",
@@ -205,6 +250,13 @@ class _EnsembleRetriever(BaseRetriever):
                 namespace="web_cache",
             )
             log.info("Enriched corpus: %s / %s", species, section)
+
+            # Bumped on every successful write, not just on BM25 rebuild:
+            # the Pinecone 'web_cache' namespace above is updated immediately,
+            # so a cache entry keyed on the old version must stop being
+            # served right away rather than staying valid for up to
+            # enrichment_rebuild_every - 1 more writes.
+            self._corpus_version += 1
 
             self._pending_enrichments += 1
             if self._pending_enrichments >= self.enrichment_rebuild_every:
@@ -386,12 +438,34 @@ class _EnsembleRetriever(BaseRetriever):
         `species` yields nothing (identification/metadata mismatch, or a
         genuinely novel query), re-run once unfiltered rather than returning
         an empty context to the caller.
+
+        Result-level cache (see _get_cache/_cache_key) sits in front of the
+        whole fan-out below when cache_dir is configured. The cache key is
+        read exactly once, before fan-out, so a concurrent enrichment write
+        that bumps _corpus_version mid-call can't tag this call's result
+        under a version newer than what actually produced it.
         """
+        cache = self._get_cache()
+        cache_key = self._cache_key(query, species) if cache is not None else None
+        if cache is not None:
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return cached
+
         web_cache: dict[str, list[Document]] = {}
         docs = self._fused_retrieve(query, species, web_cache=web_cache)
         if species is not None and not docs:
             log.info(f"No docs for species={species!r} — falling back to unfiltered retrieval")
             docs = self._fused_retrieve(query, None, web_cache=web_cache)
+
+        # Never cache empty/degraded results — a transient sub-retriever
+        # failure or a Tavily daily-cap exhaustion both degrade to [], and
+        # pinning that as "no facts" under a multi-hour TTL would re-serve
+        # the gap this same retriever's own thin-corpus/retry logic exists
+        # to close.
+        if cache is not None and docs:
+            cache.set(cache_key, docs, expire=self.cache_ttl_seconds)
+
         return docs
 
     def _get_relevant_documents(
