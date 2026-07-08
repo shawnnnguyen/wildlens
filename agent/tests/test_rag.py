@@ -279,6 +279,78 @@ def test_enrich_async_debounces_bm25_rebuild():
     assert retriever.retrievers[0] is not bm25  # atomically swapped for a fresh instance
 
 
+# ── Retrieval-result caching (opt-in — cache_dir=None everywhere else means
+#    every test above already exercises the caching-disabled default path) ──
+
+def test_retrieval_cache_hit_avoids_second_sub_retriever_call(tmp_path):
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.return_value = [
+        Document(page_content="cached fact", metadata={"species": "Lion", "section": "diet"})
+    ]
+    retriever = _EnsembleRetriever(retrievers=[mock_retriever], weights=[1.0], cache_dir=str(tmp_path))
+
+    first = retriever.retrieve("lion diet")
+    second = retriever.retrieve("lion diet")
+
+    assert [d.page_content for d in first] == [d.page_content for d in second]
+    assert mock_retriever.invoke.call_count == 1  # second call was a cache hit
+
+
+def test_retrieval_cache_invalidated_by_enrichment_write(tmp_path):
+    """A corpus_version bump (from a successful enrichment write) must
+    invalidate a previously-cached result for the same query+species."""
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.side_effect = [
+        [Document(page_content="v1 fact", metadata={"species": "Lion"})],
+        [Document(page_content="v2 fact", metadata={"species": "Lion"})],
+    ]
+    store = MagicMock()
+    store.get_species_id.return_value = 1
+    pinecone_index = MagicMock()
+    embeddings = MagicMock()
+    embeddings.embed_query.return_value = [0.0] * 384
+
+    retriever = _EnsembleRetriever(
+        retrievers=[mock_retriever], weights=[1.0], cache_dir=str(tmp_path),
+        supabase_store=store, pinecone_index=pinecone_index, embeddings=embeddings,
+    )
+
+    first = retriever.retrieve("lion diet")
+    assert first[0].page_content == "v1 fact"
+
+    retriever.enrich_async(species="Lion", section="diet", content="new fact").result()
+
+    second = retriever.retrieve("lion diet")
+    assert second[0].page_content == "v2 fact"
+    assert mock_retriever.invoke.call_count == 2  # cache missed after the version bump
+
+
+def test_retrieval_cache_does_not_cache_empty_results(tmp_path):
+    """A transient degrade-to-[] (sub-retriever failure, Tavily cap exhaustion)
+    must not be pinned as 'no facts' for the cache's TTL."""
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.return_value = []
+    retriever = _EnsembleRetriever(retrievers=[mock_retriever], weights=[1.0], cache_dir=str(tmp_path))
+
+    retriever.retrieve("nothing found query")
+    retriever.retrieve("nothing found query")
+
+    assert mock_retriever.invoke.call_count == 2  # never cached, always re-fetched
+
+
+def test_retrieval_cache_disabled_by_default():
+    """cache_dir defaults to None — repeat queries must re-fetch every time,
+    matching pre-caching behavior exactly."""
+    mock_retriever = MagicMock()
+    mock_retriever.invoke.return_value = [Document(page_content="fact", metadata={"species": "Lion"})]
+    retriever = _EnsembleRetriever(retrievers=[mock_retriever], weights=[1.0])
+
+    retriever.retrieve("lion diet")
+    retriever.retrieve("lion diet")
+
+    assert mock_retriever.invoke.call_count == 2
+
+
 # ── Bug #8: ThreadPoolExecutor is created once and reused ───────────────────
 
 def test_executor_is_reused_across_retrieve_calls():

@@ -50,6 +50,8 @@ def init_rag(
     final_k:           int   = 6,
     rerank_threshold:  float = 0.0,
     use_reranker:      bool  = True,
+    cache_dir:         str | None = None,
+    cache_ttl_seconds: int   = 6 * 60 * 60,
 ):
     """
     Return a hybrid EnsembleRetriever (BM25 + Pinecone semantic search + Tavily web search).
@@ -68,6 +70,10 @@ def init_rag(
         final_k:          Max documents returned after fusion (and re-ranking, if enabled).
         rerank_threshold: Minimum cross-encoder relevance score to keep a candidate.
         use_reranker:     Load a cross-encoder to re-rank fused candidates.
+        cache_dir:        Directory for the opt-in retrieval-result cache (diskcache). None
+                           (default) disables caching entirely. See ranking.py's
+                           _EnsembleRetriever.cache_dir/_get_cache/_cache_key.
+        cache_ttl_seconds: TTL backstop for cached results (default 6h) — see _cache_key().
 
     Env vars consumed:
         PINECONE_API_KEY, PINECONE_INDEX_NAME  — Pinecone connection
@@ -128,6 +134,8 @@ def init_rag(
         supabase_store=supabase_store,
         pinecone_index=pinecone_index,
         embeddings=embeddings,
+        cache_dir=cache_dir,
+        cache_ttl_seconds=cache_ttl_seconds,
     )
 
     # ── Cross-encoder re-rank (optional, loaded in the background) ───────────

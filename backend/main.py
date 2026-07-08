@@ -62,17 +62,31 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     from langchain_openai import ChatOpenAI
 
     llm_vision = ChatGoogleGenerativeAI(
-        model=os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"), temperature=0.35,
+        model=os.getenv("GEMINI_VISION_MODEL", "gemini-2.5-flash"),
+        temperature=0.35,
+        # thinking_budget=0 disables Gemini 2.5's internal reasoning tokens for this
+        # call: node_analyze_image only does structured extraction (no reasoning
+        # needed), and thinking tokens otherwise share the max_output_tokens budget,
+        # which risks truncating the structured-output JSON before it's emitted.
+        thinking_budget=int(os.getenv("GEMINI_VISION_THINKING_BUDGET", "0")),
+        max_output_tokens=int(os.getenv("GEMINI_VISION_MAX_TOKENS", "2048")),
     )
     llm_text = ChatOpenAI(
         model="deepseek-chat",
         api_key=os.environ["DEEPSEEK_API_KEY"],
         base_url="https://api.deepseek.com",
         temperature=0.35,
+        max_tokens=int(os.getenv("DEEPSEEK_MAX_TOKENS", "2048")),
     )
 
     # 4. Init RAG (slow: loads HuggingFace model + Pinecone; run off the event loop)
-    retriever = await asyncio.to_thread(init_rag)
+    # RETRIEVAL_CACHE_DIR unset (default) disables the opt-in retrieval-result
+    # cache entirely — see ranking.py's _EnsembleRetriever.cache_dir.
+    retriever = await asyncio.to_thread(
+        init_rag,
+        cache_dir=os.getenv("RETRIEVAL_CACHE_DIR"),
+        cache_ttl_seconds=int(os.getenv("RETRIEVAL_CACHE_TTL_SECONDS", str(6 * 60 * 60))),
+    )
     rag_backend = _detect_rag_backend(retriever)
     log.info("RAG backend: %s", rag_backend)
 

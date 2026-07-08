@@ -412,6 +412,20 @@ def test_check_relevance_greeting_prefixed_off_topic_question_not_small_talk():
     llm.invoke.assert_not_called()
 
 
+def test_check_relevance_novel_wildlife_phrasing_resolves_on_topic_via_embedding():
+    """'will it hurt me' is not a _WILDLIFE_KEYWORDS hit, not small talk, and
+    not a literal _ON_TOPIC_EXEMPLARS string (see nodes.py's own comment on
+    the embedding tier citing this exact phrase as the generalization case
+    a fixed keyword/exemplar list can't enumerate) — it must still resolve
+    on_topic via semantic similarity, not fall through to the LLM."""
+    llm = MagicMock()
+    embeddings = _FakeEmbeddings({"will it hurt me": [0.9, 0.1]})
+    state = _base_state(user_message="will it hurt me")
+    result = node_check_relevance(state, llm, embeddings)
+    assert result["message_relevance"]["status"] == "on_topic"
+    llm.invoke.assert_not_called()
+
+
 def test_check_relevance_embedding_ambiguous_falls_through_to_llm():
     llm = _mock_llm_content("ON_TOPIC")
     embeddings = _FakeEmbeddings({"tell me more": [0.5, 0.5]})
@@ -784,6 +798,63 @@ def test_persona_facts_fallback_fires_on_empty_string():
 
     task_message = llm.invoke.call_args[0][0][-1]
     assert "No additional guidebook facts retrieved." in task_message.content
+
+
+# ── node_generate_guide_persona: follow-up-turn task content (characterization,
+#    added before extracting the intro/follow-up branches into templates — this
+#    branch previously had zero test coverage) ────────────────────────────────
+
+def test_persona_followup_turn_interpolates_question_and_instructs_baako():
+    state = _base_state(
+        user_message="Does it bite?",
+        identification_result={"species": "African Lion (Panthera leo)", "threat_level": "high"},
+        retrieved_facts="Lions are apex predators.",
+    )
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="It can, but rarely unprovoked.")
+    node_generate_guide_persona(state, llm)
+
+    task_message = llm.invoke.call_args[0][0][-1]
+    content = task_message.content
+    assert 'The tourist is asking: "Does it bite?"' in content
+    assert "Lions are apex predators." in content
+    assert "Answer as Baako" in content
+    assert "use the session memory and animals list above" in content
+
+
+def test_persona_followup_turn_includes_animals_digest_when_multiple_species_seen():
+    """animals_digest only renders for len(identification_history) > 1 — must
+    seed 2+ entries to actually exercise it (a single entry must NOT show it)."""
+    state = _base_state(
+        user_message="Which one is more dangerous?",
+        identification_result={"species": "African Lion (Panthera leo)", "threat_level": "high"},
+        identification_history=[
+            {"species": "African Lion (Panthera leo)", "threat_level": "high"},
+            {"species": "Zebra", "threat_level": "low"},
+        ],
+    )
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="The lion, without a doubt.")
+    node_generate_guide_persona(state, llm)
+
+    task_message = llm.invoke.call_args[0][0][-1]
+    assert "Animals identified this session:" in task_message.content
+    assert "African Lion (Panthera leo) (high threat)" in task_message.content
+    assert "Zebra (low threat)" in task_message.content
+
+
+def test_persona_followup_turn_omits_animals_digest_with_single_history_entry():
+    state = _base_state(
+        user_message="What does it eat?",
+        identification_result={"species": "Zebra", "threat_level": "low"},
+        identification_history=[{"species": "Zebra", "threat_level": "low"}],
+    )
+    llm = MagicMock()
+    llm.invoke.return_value = AIMessage(content="Mostly grass.")
+    node_generate_guide_persona(state, llm)
+
+    task_message = llm.invoke.call_args[0][0][-1]
+    assert "Animals identified this session:" not in task_message.content
 
 
 # ── node_summarize_history: incremental summarized_upto (bug #3) ────────────
