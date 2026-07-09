@@ -29,6 +29,7 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.runnables import Runnable
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .data.species_lookup import canonical_common_name, find_mentioned_species, ground_truth_threat_level
@@ -44,13 +45,15 @@ _THREAT_RANK = {"low": 0, "medium": 1, "high": 2}
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8), reraise=True)
-def _invoke_with_retry(llm: BaseChatModel, messages: list):
+def _invoke_with_retry(llm: Runnable, messages: list):
     """
-    Shared retry policy for the plain llm.invoke() calls in node_summarize_history
-    and node_generate_guide_persona — both previously had zero error handling, so a
-    transient API blip (timeout, rate limit) would bubble all the way to a generic
-    500. node_analyze_image and node_check_relevance already wrap their own calls in
-    try/except and aren't touched here.
+    Shared retry policy for every plain .invoke() call against Gemini in this
+    module: node_summarize_history and node_generate_guide_persona's llm.invoke(),
+    node_analyze_image's structured.invoke() (a Runnable, same interface), and
+    _llm_classify_relevance's llm.invoke(). A transient API blip (timeout, rate
+    limit) gets retried here instead of immediately tripping the caller's
+    try/except and failing the turn (or, for the relevance classifier,
+    silently failing open).
     """
     return llm.invoke(messages)
 
@@ -197,7 +200,7 @@ def node_analyze_image(
             {"type": "image_url", "image_url": {"url": data_uri}},
         ])
 
-        result: WildlifeIdentification = structured.invoke([prompt])
+        result: WildlifeIdentification = _invoke_with_retry(structured, [prompt])
         log.info(
             "   → %s | conf=%.0f%% | threat=%s",
             result.species, result.confidence_score * 100, result.threat_level,
@@ -390,7 +393,7 @@ def _llm_classify_relevance(
             _RELEVANCE_CONTEXT_LINE.format(species=", ".join(session_species))
             if session_species else ""
         )
-        response = llm.invoke([HumanMessage(
+        response = _invoke_with_retry(llm, [HumanMessage(
             content=_RELEVANCE_PROMPT.format(context_line=context_line, message=message)
         )])
         content = (response.content or "").strip()

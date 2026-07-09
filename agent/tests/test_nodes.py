@@ -239,6 +239,7 @@ def test_check_relevance_llm_error_fails_open_and_flags_failure():
     result = node_check_relevance(state, llm)
     assert result["message_relevance"]["status"] == "on_topic"
     assert result["message_relevance"]["classification_failed"] is True
+    assert llm.invoke.call_count == 3  # tenacity's stop_after_attempt(3)
 
 
 def test_check_relevance_verbose_reply_not_misparsed_as_off_topic():
@@ -924,3 +925,21 @@ def test_persona_llm_failure_retries_then_returns_apology_script():
     assert result["final_script"]  # contract: always non-empty, even on failure
     assert result["error_message"] == "api down"
     assert len(result["chat_history"]) == 2
+
+
+def test_analyze_image_transient_failure_retries_then_falls_back():
+    """A transient Gemini error (e.g. rate limit) on structured.invoke() must be
+    retried by tenacity, not fail the turn on the first blip — only after all
+    retries are exhausted does node_analyze_image fall back to its error stub."""
+    llm = MagicMock()
+    structured = MagicMock()
+    structured.invoke.side_effect = RuntimeError("rate limited")
+    llm.with_structured_output.return_value = structured
+    state = _base_state(image_path="lion.jpg")
+
+    with patch("wildlens.nodes._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+        result = node_analyze_image(state, llm)
+
+    assert structured.invoke.call_count == 3  # tenacity's stop_after_attempt(3)
+    assert result["current_analysis"] == {"confidence_score": 0.0, "species": "unknown"}
+    assert result["error_message"] == "rate limited"
