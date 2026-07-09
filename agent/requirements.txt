@@ -24,7 +24,10 @@ tavily-python>=0.5.0
 supabase>=2.0.0                      # Supabase Python client
 
 # ── Observability ───────────────────────────────────────────────────────────────
-langfuse>=4.0.0                      # OTEL-based SDK: global Langfuse() client + CallbackHandler (optional)
+langfuse>=4.0.0                      # OTEL-based SDK: global Langfuse() client + CallbackHandler (optional).
+                                      # eval/run_eval.py's dataset.run_experiment()/client.run_experiment()
+                                      # usage was verified against the installed 4.12.0, but that API has
+                                      # been present since 4.0.0 (checked directly) — no floor bump needed.
 
 # ── BM25 keyword retriever ─────────────────────────────────────────────────────
 rank-bm25>=0.2.2                     # BM25 keyword retriever for hybrid search
