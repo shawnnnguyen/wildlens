@@ -1,0 +1,43 @@
+name: Golden-dataset eval
+
+# Not run per-commit — the roadmap (PRODUCTION_READINESS.md) calls for this
+# to run on a schedule and on-demand around prompt/model changes, not on
+# every push. Trigger manually from the Actions tab, or let the weekly
+# schedule below catch drift.
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: "Only run the first N dataset items (leave empty for the full set)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r agent/requirements.txt
+      - name: Run eval
+        working-directory: agent
+        env:
+          LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
+          LANGFUSE_HOST: ${{ secrets.LANGFUSE_HOST }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          SUPABASE_RUNTIME_KEY: ${{ secrets.SUPABASE_RUNTIME_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+        run: |
+          LIMIT_ARG=""
+          if [ -n "${{ github.event.inputs.limit }}" ]; then
+            LIMIT_ARG="--limit ${{ github.event.inputs.limit }}"
+          fi
+          python -m wildlens.eval.run_eval $LIMIT_ARG --run-name "gh-actions-${{ github.run_id }}"

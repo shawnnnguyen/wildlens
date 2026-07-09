@@ -12,6 +12,10 @@ Write path (used by ingest.py):
 Read path (used by rag.py at app startup):
   - load_all_documents()    SELECT all chunks → list[langchain Document]
                             Used to rebuild BM25 retriever in-memory
+  - list_image_files()      SELECT image_files joined to species → golden-set
+                            image source for eval/seed_dataset.py (role="ingest")
+  - public_image_url()      module-level helper, no client needed — public
+                            Storage URL for a given storage_path
 
 Prerequisites (run once in Supabase dashboard SQL editor):
 
@@ -310,3 +314,49 @@ class SupabaseStore:
         """Return total number of species rows."""
         resp = self._sb.table("species").select("id", count="exact").execute()
         return resp.count or 0
+
+    def list_image_files(self, limit_per_species: int | None = None) -> list[dict]:
+        """
+        Return [{"common_name": ..., "storage_path": ...}, ...] for every
+        Storage-backed image (used by eval/seed_dataset.py to build the golden
+        eval set from images already ingested by data/lila.py).
+
+        Only rows with a storage_path are returned — upsert_remote_image_record
+        inserts EOL-URL rows into this same table with no storage_path, which
+        aren't usable here (they aren't in the wildlife-images bucket at all).
+
+        Requires role="ingest" — per this class's docstring, the runtime role
+        has no RLS policy on image_files and will get an empty/denied result.
+        """
+        resp = (
+            self._sb.table("image_files")
+            .select("storage_path, species(common_name)")
+            .not_.is_("storage_path", "null")
+            .execute()
+        )
+        by_species: dict[str, list[str]] = {}
+        for row in resp.data or []:
+            common_name = (row.get("species") or {}).get("common_name")
+            storage_path = row.get("storage_path")
+            if not common_name or not storage_path:
+                continue
+            by_species.setdefault(common_name, []).append(storage_path)
+
+        out: list[dict] = []
+        for common_name, paths in by_species.items():
+            selected = paths if limit_per_species is None else paths[:limit_per_species]
+            out.extend({"common_name": common_name, "storage_path": p} for p in selected)
+        return out
+
+
+def public_image_url(storage_path: str) -> str:
+    """
+    Public URL for a wildlife-images Storage object — the bucket is public
+    (see module docstring), so fetching an image needs only SUPABASE_URL, not
+    a Supabase client/credentials. Used by the eval runner to download dataset
+    item images: neither SUPABASE_INGEST_KEY nor SUPABASE_RUNTIME_KEY has read
+    access to Storage (see SupabaseStore's role docstring), so a keyless
+    public-URL fetch is the only path that works for both roles.
+    """
+    base = os.environ["SUPABASE_URL"].rstrip("/")
+    return f"{base}/storage/v1/object/public/{_BUCKET}/{storage_path}"

@@ -8,16 +8,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_openai import ChatOpenAI
 
 from .graphs import build_graph, make_turn_input
+from .logging_config import configure_logging
 from .observability import init_langfuse, invoke_with_tracing
 from .rag import init_rag
 
 load_dotenv()
-
-logging.basicConfig(
-    level=logging.WARNING,
-    format="%(asctime)s │ %(levelname)-8s │ %(message)s",
-    datefmt="%H:%M:%S",
-)
+configure_logging()
 log = logging.getLogger("wildlens")
 
 

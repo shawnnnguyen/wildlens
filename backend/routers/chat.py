@@ -7,6 +7,7 @@ import logging
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 
 from wildlens.graphs import make_turn_input
+from wildlens.logging_config import current_thread_id
 from wildlens.observability import invoke_with_tracing
 
 from ..audio_store import store_audio
@@ -69,6 +70,15 @@ async def chat(
     registry: SessionRegistry = Depends(get_session_registry),
     langfuse_handler=Depends(get_langfuse_handler),
 ) -> ChatResponse:
+    # Every log line emitted while handling this request — including from
+    # agent/RAG code with no notion of "request" — carries this thread_id,
+    # the same value already used as langfuse_session_id below, so logs and
+    # traces are joinable. FastAPI runs each request in its own asyncio Task
+    # with its own copy of the context, so this can't leak across requests;
+    # asyncio.to_thread() (used for the graph invocation) copies the current
+    # context into its worker thread, so no further plumbing is needed.
+    current_thread_id.set(thread_id)
+
     # ── Session auth ─────────────────────────────────────────────────────────
     # registry.create() is an atomic INSERT: it succeeds (and returns the new
     # secret) only on the very first request for this thread_id. Every later

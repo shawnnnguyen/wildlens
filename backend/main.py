@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from wildlens.graphs import build_graph
+from wildlens.logging_config import configure_logging, uvicorn_log_config
 from wildlens.observability import init_langfuse
 from wildlens.rag import _NullRetriever, init_rag
 from wildlens.tts import _EDGE_TTS_AVAILABLE, _GTTS_AVAILABLE
@@ -24,6 +25,7 @@ from .schemas import ErrorDetail, ErrorResponse
 from .session_registry import SessionRegistry
 
 load_dotenv()
+configure_logging()
 
 log = logging.getLogger("backend")
 
@@ -197,3 +199,19 @@ def create_app() -> FastAPI:
 
 
 app = create_app()
+
+
+if __name__ == "__main__":
+    # `uvicorn backend.main:app` also works but won't route uvicorn's own
+    # access/error logs through the JSON formatter — its loggers install
+    # their own handlers with propagate=False. Run via `python -m
+    # backend.main` (or `python backend/main.py`) to get JSON logs for
+    # those too.
+    import uvicorn
+
+    uvicorn.run(
+        app,
+        host=os.getenv("HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", "8000")),
+        log_config=uvicorn_log_config(),
+    )
