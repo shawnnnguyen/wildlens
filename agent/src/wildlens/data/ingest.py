@@ -1,5 +1,5 @@
 """
-Data ingestion CLI for the Safari Guide.
+Data ingestion CLI for the WildLens.
 
 Usage
 ─────

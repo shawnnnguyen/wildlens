@@ -46,7 +46,7 @@ def test_low_confidence_photo_never_calls_persona_llm():
             config={"configurable": {"thread_id": "test-fallback"}},
         )
 
-    assert "Baako doesn't guess" in result["final_script"]
+    assert "Kate doesn't guess" in result["final_script"]
     llm_text.invoke.assert_not_called()
 
 

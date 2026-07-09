@@ -1,5 +1,5 @@
 """
-Supabase read/write adapter for the Safari Guide data layer.
+Supabase read/write adapter for the WildLens data layer.
 
 Responsibilities
 ────────────────

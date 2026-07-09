@@ -136,7 +136,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     interval = int(os.getenv("JANITOR_INTERVAL_SECONDS", "900"))
     janitor  = asyncio.create_task(audio_janitor(ttl, interval))
 
-    log.info("Safari Guide backend ready")
+    log.info("WildLens backend ready")
     yield
 
     # Shutdown: cancel the sleeping janitor cleanly
@@ -146,11 +146,11 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     except asyncio.CancelledError:
         pass
     sqlite_conn.close()
-    log.info("Safari Guide backend shutting down")
+    log.info("WildLens backend shutting down")
 
 
 def create_app() -> FastAPI:
-    app = FastAPI(title="Safari Guide API", version="1.0.0", lifespan=lifespan)
+    app = FastAPI(title="WildLens API", version="1.0.0", lifespan=lifespan)
 
     # ── Middleware ────────────────────────────────────────────────────────────
     origins_raw = os.getenv("ALLOWED_ORIGINS", "*")

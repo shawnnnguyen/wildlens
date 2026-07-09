@@ -1,5 +1,5 @@
 """
-Graph construction for the Safari Guide.
+Graph construction for the WildLens.
 
 Single compiled graph with an injectable checkpointer (MemorySaver by default;
 the backend supplies a SqliteSaver — see build_graph's checkpointer param).
@@ -52,7 +52,7 @@ from langgraph.graph import END, START, StateGraph
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.retrievers import BaseRetriever
 
-from .state import MIN_CONFIDENCE, SafariGuideState
+from .state import MIN_CONFIDENCE, WildlensState
 from .nodes import (
     node_analyze_image,
     node_check_relevance,
@@ -67,7 +67,7 @@ from .nodes import (
 
 # ── Routing functions ─────────────────────────────────────────────────────────
 
-def route_entry(state: SafariGuideState) -> str:
+def route_entry(state: WildlensState) -> str:
     """Route to image analysis if a new photo is provided; otherwise gate the
     text message through check_relevance before summarise/retrieve/persona."""
     if state.get("image_path", "").strip():
@@ -75,7 +75,7 @@ def route_entry(state: SafariGuideState) -> str:
     return "check_relevance"
 
 
-def route_after_analysis(state: SafariGuideState) -> str:
+def route_after_analysis(state: WildlensState) -> str:
     """Route based on this turn's confidence score (current_analysis, not the
     last-known-good identification_result — see node_analyze_image)."""
     confidence = state.get("current_analysis", {}).get("confidence_score", 0.0)
@@ -85,7 +85,7 @@ def route_after_analysis(state: SafariGuideState) -> str:
     )
 
 
-def route_after_relevance(state: SafariGuideState) -> str:
+def route_after_relevance(state: WildlensState) -> str:
     """
     Route based on node_check_relevance's verdict:
       off_topic  -> a zero-cost templated redirect, never through persona
@@ -104,7 +104,7 @@ def route_after_relevance(state: SafariGuideState) -> str:
     return "summarize_history"
 
 
-def route_audio(state: SafariGuideState) -> str:
+def route_audio(state: WildlensState) -> str:
     """Run TTS only when the caller explicitly requests voice output."""
     return "generate_audio" if state.get("voice_requested", False) else END
 
@@ -119,7 +119,7 @@ def build_graph(
     checkpointer: BaseCheckpointSaver | None = None,
 ):
     """
-    Compile and return the Safari Guide graph.
+    Compile and return the WildLens graph.
 
     llm_vision — multimodal model (Gemini) used only for node_analyze_image.
     llm_text   — text model (DeepSeek) used for summarise + persona nodes.
@@ -156,7 +156,7 @@ def build_graph(
         _retrieve = observe(name="retrieve_information", as_type="retriever")(_retrieve)
         _audio    = observe(name="generate_audio", as_type="tool")(_audio)
 
-    g = StateGraph(SafariGuideState)
+    g = StateGraph(WildlensState)
 
     # ── Register nodes ────────────────────────────────────────────────────────
     g.add_node("analyze_image",           _analyze)

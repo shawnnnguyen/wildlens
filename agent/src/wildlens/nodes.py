@@ -1,5 +1,5 @@
 """
-LangGraph node implementations for the Safari Guide.
+LangGraph node implementations for the WildLens.
 
 Every node is a pure function: (state, *deps) -> partial_state_dict.
 Dependencies (llm, vectorstore) are injected via closures in graphs.py,
@@ -13,7 +13,7 @@ node_check_relevance       text-turn gate → on_topic / small_talk / off_topic
 node_topic_redirect_fallback zero-cost redirect when check_relevance says off_topic
 node_retrieve_information  hybrid RAG search → retrieved_facts
 node_summarize_history     compresses old chat_history → conversation_summary
-node_generate_guide_persona Baako persona script generation
+node_generate_guide_persona Kate persona script generation
 node_generate_audio        TTS synthesis (conditional on voice_requested)
 """
 from __future__ import annotations
@@ -33,7 +33,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 
 from .data.species_lookup import canonical_common_name, find_mentioned_species, ground_truth_threat_level
 from .rag import _EnsembleRetriever
-from .state import MIN_CONFIDENCE, SUMMARY_THRESHOLD, SafariGuideState, WildlifeIdentification
+from .state import MIN_CONFIDENCE, SUMMARY_THRESHOLD, WildlensState, WildlifeIdentification
 from .tts import synthesise_audio
 
 log = logging.getLogger("safari_guide.nodes")
@@ -54,9 +54,9 @@ def _invoke_with_retry(llm: BaseChatModel, messages: list):
     """
     return llm.invoke(messages)
 
-# ── Baako persona (injected first in every generation call) ───────────────────
-_BAAKO_SYSTEM = SystemMessage(content=(
-    "You are Baako — a knowledgeable and enthusiastic African safari guide with 20 years "
+# ── Kate persona (injected first in every generation call) ───────────────────
+_KATE_SYSTEM = SystemMessage(content=(
+    "You are Kate — a knowledgeable and enthusiastic African safari guide with 20 years "
     "of experience across the Serengeti, Maasai Mara, and Okavango Delta. "
     "You speak with genuine warmth and respect for the wildlife you describe, grounding "
     "your enthusiasm in scientific accuracy rather than theatrics. "
@@ -74,7 +74,7 @@ _PERSONA_FOLLOWUP_TASK_TEMPLATE = (
     "Relevant facts (Guidebook = vetted internal data; Web = live search, "
     "supplementary only — prefer Guidebook on conflict, especially for "
     "safety/danger information):\n{facts}{animals_digest}\n\n"
-    "Answer as Baako. If the question refers to a previous animal, "
+    "Answer as Kate. If the question refers to a previous animal, "
     "use the session memory and animals list above."
 )
 
@@ -84,7 +84,7 @@ _PERSONA_INTRO_TASK_TEMPLATE = (
     "Observable traits: {trait_line}.\n\n"
     "Verified facts (Guidebook = vetted internal data; Web = live search, "
     "supplementary only — prefer Guidebook on conflict):\n{facts}{animals_digest}\n\n"
-    "Generate an audio tour-guide script as Baako introducing this animal. "
+    "Generate an audio tour-guide script as Kate introducing this animal. "
     "Clearly state its common name, genus, and species. Then highlight its "
     "circadian rhythm (when it's active) and its diet, drawing only from the "
     "facts above. If the facts above don't cover its circadian rhythm or diet, "
@@ -152,7 +152,7 @@ def parse_binomial(species: str) -> tuple[str, str]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_analyze_image(
-    state: SafariGuideState,
+    state: WildlensState,
     llm: BaseChatModel,
 ) -> dict:
     """
@@ -243,7 +243,7 @@ def node_analyze_image(
 # NODE 2 — Unclear photo fallback
 # ══════════════════════════════════════════════════════════════════════════════
 
-def node_unclear_photo_fallback(state: SafariGuideState) -> dict:
+def node_unclear_photo_fallback(state: WildlensState) -> dict:
     """
     Reached when confidence_score < MIN_CONFIDENCE.
 
@@ -259,7 +259,7 @@ def node_unclear_photo_fallback(state: SafariGuideState) -> dict:
 
     message = (
         f"Ha, I can just about make out what might be {guess} — "
-        f"but I'm only {confidence:.0%} confident, and Baako doesn't guess! "
+        f"but I'm only {confidence:.0%} confident, and Kate doesn't guess! "
         "Could you try one more shot that's a bit closer, in sharper focus, "
         "and without harsh backlighting? "
         "Once I get a clearer look, I'll have a proper tale for you!"
@@ -292,7 +292,7 @@ _WILDLIFE_KEYWORDS = {
     "poaching", "savanna", "savannah", "serengeti", "tour", "guide",
 }
 
-# Small talk directed at Baako personally — treated as its own bucket (not
+# Small talk directed at Kate personally — treated as its own bucket (not
 # folded into on_topic) so it can skip retrieve_information entirely; see
 # node_check_relevance and route_after_relevance in graphs.py.
 _SMALL_TALK_PHRASES = {
@@ -520,7 +520,7 @@ def _embedding_classify_relevance(message: str, embeddings: Any) -> str | None:
     return None
 
 
-def node_check_relevance(state: SafariGuideState, llm: BaseChatModel, embeddings: Any = None) -> dict:
+def node_check_relevance(state: WildlensState, llm: BaseChatModel, embeddings: Any = None) -> dict:
     """
     Gate for text turns only (see route_entry/route_after_relevance in
     graphs.py) — classifies user_message into "on_topic" / "small_talk" /
@@ -530,7 +530,7 @@ def node_check_relevance(state: SafariGuideState, llm: BaseChatModel, embeddings
     Layered cheapest-first so the LLM is only invoked for genuinely
     ambiguous messages. Species mention and wildlife-keyword checks run
     BEFORE the small-talk check — not after — because a message like "Hi
-    Baako, what do lions eat?" or "Thanks! What about elephants?" contains a
+    Kate, what do lions eat?" or "Thanks! What about elephants?" contains a
     small-talk phrase AND a real question; checking small talk first would
     skip retrieval for a message that clearly needs it.
       1. species-mention match (free) — also resolves which species this
@@ -593,7 +593,7 @@ def node_check_relevance(state: SafariGuideState, llm: BaseChatModel, embeddings
 # NODE — Topic redirect fallback
 # ══════════════════════════════════════════════════════════════════════════════
 
-def node_topic_redirect_fallback(state: SafariGuideState) -> dict:
+def node_topic_redirect_fallback(state: WildlensState) -> dict:
     """
     Reached when node_check_relevance classifies the message as off_topic.
 
@@ -624,7 +624,7 @@ def node_topic_redirect_fallback(state: SafariGuideState) -> dict:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_retrieve_information(
-    state: SafariGuideState,
+    state: WildlensState,
     retriever: BaseRetriever,
 ) -> dict:
     """
@@ -762,7 +762,7 @@ def _strip_synthetic(messages: list) -> list:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_summarize_history(
-    state: SafariGuideState,
+    state: WildlensState,
     llm: BaseChatModel,
 ) -> dict:
     """
@@ -833,14 +833,14 @@ def node_summarize_history(
 # ══════════════════════════════════════════════════════════════════════════════
 
 def node_generate_guide_persona(
-    state: SafariGuideState,
+    state: WildlensState,
     llm: BaseChatModel,
 ) -> dict:
     """
-    Generate Baako's response for the current turn.
+    Generate Kate's response for the current turn.
 
     LLM context stack (in order):
-      1. Baako system prompt
+      1. Kate system prompt
       2. conversation_summary block — compressed long-range memory
       3. Last 6 chat_history messages — recent turn context
       4. identification_history digest — all animals seen this session
@@ -911,7 +911,7 @@ def node_generate_guide_persona(
             facts=facts, animals_digest=animals_digest,
         ))
 
-    messages = [_BAAKO_SYSTEM] + context_msgs + [task]
+    messages = [_KATE_SYSTEM] + context_msgs + [task]
     try:
         response = _invoke_with_retry(llm, messages)
     except Exception as exc:
@@ -941,7 +941,7 @@ def node_generate_guide_persona(
 # NODE 6 — Generate audio  (conditional on voice_requested)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def node_generate_audio(state: SafariGuideState) -> dict:
+def node_generate_audio(state: WildlensState) -> dict:
     """
     Thin adapter: reads final_script, writes audio_file_path.
     Only reached when voice_requested=True (enforced by route_audio in graphs.py).

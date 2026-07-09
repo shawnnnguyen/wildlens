@@ -149,7 +149,7 @@ export default function AnimalIdChat() {
                   </button>
                 </div>
                 <div style={{ textAlign: "center", fontSize: 11, color: "#b4b4ad", marginTop: 9 }}>
-                  Safari Guide can make mistakes — verify critical identifications.
+                  WildLens can make mistakes — verify critical identifications.
                 </div>
               </div>
             </div>
@@ -211,7 +211,7 @@ function Sidebar({
           <div style={{ width: 26, height: 26, borderRadius: 7, background: ACCENT, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 15 }}>
             🐾
           </div>
-          <span style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.01em" }}>Safari Guide</span>
+          <span style={{ fontSize: 14.5, fontWeight: 600, letterSpacing: "-0.01em" }}>WildLens</span>
         </div>
         <button onClick={onNewSession} className="wg-newbtn" style={newBtnStyle}>
           <span style={{ fontSize: 16, lineHeight: 0, color: "#8a8a85" }}>＋</span>

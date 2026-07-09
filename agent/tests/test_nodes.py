@@ -1,5 +1,5 @@
 """
-Unit tests for Safari Guide nodes.
+Unit tests for WildLens nodes.
 
 Each node is tested with a mocked LLM and/or in-memory FAISS so these tests
 run without a GOOGLE_API_KEY and without network access.
@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from wildlens.state import MIN_CONFIDENCE, SafariGuideState, WildlifeIdentification
+from wildlens.state import MIN_CONFIDENCE, WildlensState, WildlifeIdentification
 from wildlens.nodes import (
     _embedding_classify_relevance,
     _is_small_talk,
@@ -39,8 +39,8 @@ from wildlens.nodes import (
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _base_state(**overrides) -> SafariGuideState:
-    defaults = SafariGuideState(
+def _base_state(**overrides) -> WildlensState:
+    defaults = WildlensState(
         image_path="",
         user_message="",
         voice_requested=False,
@@ -204,7 +204,7 @@ def test_check_relevance_greeting_plus_real_question_is_not_small_talk():
     question must not be misrouted to small_talk (which would skip
     retrieval) — species/keyword matches must win over a mere greeting."""
     llm = MagicMock()
-    state = _base_state(user_message="Hi Baako, what do lions eat?")
+    state = _base_state(user_message="Hi Kate, what do lions eat?")
     result = node_check_relevance(state, llm)
     assert result["message_relevance"]["status"] == "on_topic"
     assert result["message_relevance"]["mentioned_species"] == "African Lion"

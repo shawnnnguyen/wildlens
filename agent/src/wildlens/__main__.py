@@ -48,7 +48,7 @@ def run_chat() -> None:
         }
 
     print("\n" + "═" * 60)
-    print("  Baako — Digital Safari Tour Guide")
+    print("  Kate — Digital Safari Tour Guide")
     print("═" * 60)
     print("  Type your question, or share an image path.")
     print("  Commands:")
@@ -109,7 +109,7 @@ def run_chat() -> None:
         if result.get("error_message"):
             print(f"  [!] {result['error_message']}")
 
-        print(f"\nBaako: {result.get('final_script', '').strip()}")
+        print(f"\nKate: {result.get('final_script', '').strip()}")
 
         audio = result.get("audio_file_path", "")
         if audio:

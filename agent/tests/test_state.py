@@ -1,5 +1,5 @@
 """
-Unit tests for the SafariGuideState reducers (Phase 1 hardening: bounded
+Unit tests for the WildlensState reducers (Phase 1 hardening: bounded
 identification_history).
 """
 from __future__ import annotations

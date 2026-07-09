@@ -1,9 +1,9 @@
 """Digital Safari Tour Guide — LangGraph backend."""
 
-from .state import MIN_CONFIDENCE, SUMMARY_THRESHOLD, SafariGuideState
+from .state import MIN_CONFIDENCE, SUMMARY_THRESHOLD, WildlensState
 
 __all__ = [
-    "SafariGuideState",
+    "WildlensState",
     "MIN_CONFIDENCE",
     "SUMMARY_THRESHOLD",
     "init_rag",

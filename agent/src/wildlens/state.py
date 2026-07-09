@@ -1,5 +1,5 @@
 """
-State schema and structured-output Pydantic model for the Safari Guide graph.
+State schema and structured-output Pydantic model for the WildLens graph.
 """
 from __future__ import annotations
 
@@ -28,9 +28,9 @@ def _bounded_identification_history(existing: list[dict], new: list[dict]) -> li
 
 # ── Graph state ───────────────────────────────────────────────────────────────
 
-class SafariGuideState(TypedDict):
+class WildlensState(TypedDict):
     """
-    Central state for the Safari Guide LangGraph.
+    Central state for the WildLens LangGraph.
 
     Reducer rules
     ─────────────
