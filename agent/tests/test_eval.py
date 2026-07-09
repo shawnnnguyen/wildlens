@@ -168,7 +168,7 @@ def test_persona_hallucination_skips_abstained_turns():
     judge_llm = MagicMock()
     evaluator = make_persona_hallucination_evaluator(judge_llm, _GROUND_TRUTH)
 
-    output = {"final_script": "Baako doesn't guess!", "error_message": ABSTAIN_ERROR}
+    output = {"final_script": "Kate doesn't guess!", "error_message": ABSTAIN_ERROR}
     result = evaluator(input="x", output=output, expected_output={"species": "African Lion"}, metadata=None)
 
     assert result is None

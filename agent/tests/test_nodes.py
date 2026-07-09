@@ -804,7 +804,7 @@ def test_persona_facts_fallback_fires_on_empty_string():
 #    added before extracting the intro/follow-up branches into templates — this
 #    branch previously had zero test coverage) ────────────────────────────────
 
-def test_persona_followup_turn_interpolates_question_and_instructs_baako():
+def test_persona_followup_turn_interpolates_question_and_instructs_kate():
     state = _base_state(
         user_message="Does it bite?",
         identification_result={"species": "African Lion (Panthera leo)", "threat_level": "high"},
@@ -818,7 +818,7 @@ def test_persona_followup_turn_interpolates_question_and_instructs_baako():
     content = task_message.content
     assert 'The tourist is asking: "Does it bite?"' in content
     assert "Lions are apex predators." in content
-    assert "Answer as Baako" in content
+    assert "Answer as Kate" in content
     assert "use the session memory and animals list above" in content
 
 

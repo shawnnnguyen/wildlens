@@ -214,7 +214,7 @@ def make_persona_hallucination_evaluator(judge_llm, species_ground_truth: dict[s
         explanation: str = Field(description="One sentence: what, if anything, was contradicted.")
 
     def persona_hallucination(*, input: Any, output: dict, expected_output: Any, metadata: Any, **_: Any) -> Evaluation | None:
-        # Judging the canned "Baako doesn't guess!" retry script (see
+        # Judging the canned "Kate doesn't guess!" retry script (see
         # node_unclear_photo_fallback) against ground truth for an animal the
         # app never actually claimed to identify is pure noise — skip it.
         if _is_abstention(output):
