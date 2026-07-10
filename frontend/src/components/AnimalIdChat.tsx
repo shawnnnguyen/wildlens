@@ -1,6 +1,7 @@
 import { useEffect, useRef, type CSSProperties, type DragEvent, type KeyboardEvent } from "react";
 import { useSessions } from "../hooks/useSessions";
 import type { Session, SpeciesCard, UiMessage } from "../types";
+import AudioPlayButton from "./AudioPlayButton";
 
 const ACCENT = "#5a7250";
 
@@ -32,6 +33,7 @@ export default function AnimalIdChat() {
     onSelectSession,
     startIdentification,
     send,
+    setMessageAudioUrl,
   } = useSessions();
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -115,7 +117,14 @@ export default function AnimalIdChat() {
             <div ref={scrollRef} style={{ flex: 1, overflowY: "auto" }}>
               <div style={{ maxWidth: 720, margin: "0 auto", padding: "28px 24px 8px" }}>
                 {active!.messages.map((m) => (
-                  <MessageRow key={m.id} message={m} onSuggestionClick={send} />
+                  <MessageRow
+                    key={m.id}
+                    message={m}
+                    threadId={active!.id}
+                    sessionSecret={active!.secret}
+                    onSuggestionClick={send}
+                    onAudioReady={(url) => setMessageAudioUrl(active!.id, m.id, url)}
+                  />
                 ))}
                 {isThinking && <ThinkingDots />}
               </div>
@@ -289,7 +298,19 @@ function EmptyState({ onPick }: { onPick: () => void }) {
   );
 }
 
-function MessageRow({ message, onSuggestionClick }: { message: UiMessage; onSuggestionClick: (text: string) => void }) {
+function MessageRow({
+  message,
+  threadId,
+  sessionSecret,
+  onSuggestionClick,
+  onAudioReady,
+}: {
+  message: UiMessage;
+  threadId: string;
+  sessionSecret: string;
+  onSuggestionClick: (text: string) => void;
+  onAudioReady: (url: string) => void;
+}) {
   const isCard = message.kind === "card";
   const isUser = message.role === "human";
   const wrapStyle: CSSProperties = {
@@ -310,12 +331,20 @@ function MessageRow({ message, onSuggestionClick }: { message: UiMessage; onSugg
   if (message.kind === "card") {
     return (
       <div style={wrapStyle}>
-        <SpeciesCardView card={message.card} onSuggestionClick={onSuggestionClick} />
+        <SpeciesCardView
+          card={message.card}
+          audioUrl={message.audioUrl}
+          threadId={threadId}
+          sessionSecret={sessionSecret}
+          onSuggestionClick={onSuggestionClick}
+          onAudioReady={onAudioReady}
+        />
       </div>
     );
   }
 
   const isError = message.role === "error";
+  const isAi = message.role === "ai";
   const bubbleStyle: CSSProperties = isUser
     ? { display: "inline-block", background: "#f0f0ed", padding: "10px 15px", borderRadius: "16px 16px 4px 16px", fontSize: 14.5, lineHeight: 1.55, maxWidth: "78%", textAlign: "left", whiteSpace: "pre-wrap" }
     : {
@@ -329,12 +358,37 @@ function MessageRow({ message, onSuggestionClick }: { message: UiMessage; onSugg
 
   return (
     <div style={wrapStyle}>
-      <div style={bubbleStyle}>{message.text}</div>
+      <div style={{ display: "flex", flexDirection: "column", alignItems: isUser ? "flex-end" : "flex-start" }}>
+        <div style={bubbleStyle}>{message.text}</div>
+        {isAi && message.text.trim() && (
+          <AudioPlayButton
+            text={message.text}
+            audioUrl={message.audioUrl}
+            threadId={threadId}
+            sessionSecret={sessionSecret}
+            onAudioReady={onAudioReady}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-function SpeciesCardView({ card, onSuggestionClick }: { card: SpeciesCard; onSuggestionClick: (text: string) => void }) {
+function SpeciesCardView({
+  card,
+  audioUrl,
+  threadId,
+  sessionSecret,
+  onSuggestionClick,
+  onAudioReady,
+}: {
+  card: SpeciesCard;
+  audioUrl?: string;
+  threadId: string;
+  sessionSecret: string;
+  onSuggestionClick: (text: string) => void;
+  onAudioReady: (url: string) => void;
+}) {
   const details = [
     { label: "Habitat", value: card.habitatContext },
     { label: "Threat level", value: THREAT_LABEL[card.threatLevel] },
@@ -357,11 +411,21 @@ function SpeciesCardView({ card, onSuggestionClick }: { card: SpeciesCard; onSug
         <span style={{ fontSize: 12, color: "#8a8a85" }}>{Math.round(card.confidenceScore * 100)}% match</span>
       </div>
 
-      <p style={{ fontSize: 14.5, lineHeight: 1.6, color: "#33332f", margin: "14px 0 16px", maxWidth: 600, whiteSpace: "pre-wrap" }}>
+      <p style={{ fontSize: 14.5, lineHeight: 1.6, color: "#33332f", margin: "14px 0 4px", maxWidth: 600, whiteSpace: "pre-wrap" }}>
         {card.description}
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 1, background: "#ececea", border: "1px solid #ececea", borderRadius: 12, overflow: "hidden" }}>
+      {card.description.trim() && (
+        <AudioPlayButton
+          text={card.description}
+          audioUrl={audioUrl}
+          threadId={threadId}
+          sessionSecret={sessionSecret}
+          onAudioReady={onAudioReady}
+        />
+      )}
+
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 1, background: "#ececea", border: "1px solid #ececea", borderRadius: 12, overflow: "hidden", marginTop: 16 }}>
         {details.map((d) => (
           <div key={d.label} style={{ background: "#fbfbfa", padding: "12px 14px" }}>
             <div style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: "0.04em", color: "#a0a09a", marginBottom: 3 }}>{d.label}</div>

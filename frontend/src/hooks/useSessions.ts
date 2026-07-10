@@ -40,6 +40,18 @@ export function useSessions() {
     setSessions((prev) => prev.map((s) => (s.id === id ? updater(s) : s)));
   }, []);
 
+  const setMessageAudioUrl = useCallback(
+    (sessionId: string, messageId: string, audioUrl: string) => {
+      updateSession(sessionId, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === messageId && (m.kind === "text" || m.kind === "card") ? { ...m, audioUrl } : m,
+        ),
+      }));
+    },
+    [updateSession],
+  );
+
   const onNewSession = useCallback(() => {
     setSessions((prev) => (prev.some((s) => s.id === NEW_SESSION_ID) ? prev : [emptySession(), ...prev]));
     setActiveId(NEW_SESSION_ID);
@@ -171,5 +183,6 @@ export function useSessions() {
     onSelectSession,
     startIdentification,
     send,
+    setMessageAudioUrl,
   };
 }

@@ -28,6 +28,10 @@ class ChatResponse(BaseModel):
     error_message: str | None
 
 
+class AudioSynthesizeResponse(BaseModel):
+    audio_url: str
+
+
 class MessageRole(str, Enum):
     human = "human"
     ai = "ai"
