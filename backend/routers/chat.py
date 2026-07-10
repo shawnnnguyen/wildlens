@@ -184,7 +184,9 @@ async def _handle_chat_turn(
         }
 
     try:
-        result: dict = await asyncio.to_thread(
+        result: dict
+        trace_id: str | None
+        result, trace_id = await asyncio.to_thread(
             invoke_with_tracing, graph, turn_input, config, langfuse_handler
         )
     except Exception:
@@ -228,6 +230,7 @@ async def _handle_chat_turn(
     return ChatResponse(
         thread_id=thread_id,
         session_secret=new_secret,
+        trace_id=trace_id,
         final_script=final_script,
         audio_url=audio_url,
         identification=_build_identification(

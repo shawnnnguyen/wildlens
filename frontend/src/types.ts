@@ -13,6 +13,7 @@ export interface WildlifeIdentification {
 export interface ChatResponse {
   thread_id: string;
   session_secret: string | null; // only set on the turn that creates thread_id
+  trace_id: string | null; // Langfuse trace ID for this turn; null when tracing is disabled
   final_script: string;
   audio_url: string | null;
   identification: WildlifeIdentification | null;
@@ -51,6 +52,12 @@ export interface AudioSynthesizeResponse {
   audio_url: string;
 }
 
+export type FeedbackRating = "up" | "down";
+
+export interface FeedbackResponse {
+  ok: boolean;
+}
+
 // ── Frontend-only UI state (not part of the backend contract) ────────────────
 
 // `identification.species` arrives as "Common name (Scientific name)" — split
@@ -65,10 +72,26 @@ export interface SpeciesCard {
   description: string;
 }
 
+// Feedback state for one AI-authored message. `rating` is null until the
+// visitor picks a thumb — this is never mandatory, so most messages will
+// simply never acquire one.
+export interface MessageFeedback {
+  rating: FeedbackRating | null;
+  comment: string;
+}
+
 export type UiMessage =
   | { id: string; kind: "image"; role: "human"; imageUrl: string }
-  | { id: string; kind: "text"; role: "human" | "ai" | "error"; text: string; audioUrl?: string }
-  | { id: string; kind: "card"; role: "ai"; card: SpeciesCard; audioUrl?: string };
+  | {
+      id: string;
+      kind: "text";
+      role: "human" | "ai" | "error";
+      text: string;
+      audioUrl?: string;
+      traceId?: string;
+      feedback?: MessageFeedback;
+    }
+  | { id: string; kind: "card"; role: "ai"; card: SpeciesCard; audioUrl?: string; traceId?: string; feedback?: MessageFeedback };
 
 export interface Session {
   id: string; // doubles as the backend thread_id, once identification has started

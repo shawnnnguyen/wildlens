@@ -20,7 +20,7 @@ from wildlens.rag import _NullRetriever, init_rag
 from wildlens.tts import _EDGE_TTS_AVAILABLE, _GTTS_AVAILABLE
 
 from .audio_store import audio_janitor, ensure_audio_dir
-from .routers import audio, chat, health, sessions
+from .routers import audio, chat, feedback, health, sessions
 from .schemas import ErrorDetail, ErrorResponse
 from .session_registry import SessionRegistry
 
@@ -208,6 +208,7 @@ def create_app() -> FastAPI:
     app.include_router(chat.router, prefix="/api")
     app.include_router(sessions.router, prefix="/api")
     app.include_router(audio.router, prefix="/api")
+    app.include_router(feedback.router, prefix="/api")
 
     return app
 

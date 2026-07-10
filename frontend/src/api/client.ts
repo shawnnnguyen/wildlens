@@ -1,4 +1,4 @@
-import type { AudioSynthesizeResponse, ChatResponse, ErrorResponse } from "../types";
+import type { AudioSynthesizeResponse, ChatResponse, ErrorResponse, FeedbackRating, FeedbackResponse } from "../types";
 
 export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -58,6 +58,38 @@ export async function postChat({
     method: "POST",
     body: form,
     headers: sessionSecret ? { "X-Session-Secret": sessionSecret } : undefined,
+  });
+
+  if (!response.ok) {
+    await parseErrorResponse(response);
+  }
+  return response.json();
+}
+
+export interface PostFeedbackParams {
+  threadId: string;
+  traceId: string;
+  sessionSecret: string;
+  rating: FeedbackRating;
+  comment?: string;
+}
+
+export async function postFeedback({
+  threadId,
+  traceId,
+  sessionSecret,
+  rating,
+  comment,
+}: PostFeedbackParams): Promise<FeedbackResponse> {
+  const response = await fetch(`${API_BASE_URL}/api/feedback`, {
+    method: "POST",
+    body: JSON.stringify({
+      thread_id: threadId,
+      trace_id: traceId,
+      rating,
+      comment: comment || null,
+    }),
+    headers: { "Content-Type": "application/json", "X-Session-Secret": sessionSecret },
   });
 
   if (!response.ok) {

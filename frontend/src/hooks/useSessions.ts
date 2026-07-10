@@ -1,11 +1,20 @@
 import { useCallback, useState } from "react";
-import { ApiError, postChat } from "../api/client";
-import type { Session, SpeciesCard, UiMessage, WildlifeIdentification } from "../types";
+import { ApiError, postChat, postFeedback } from "../api/client";
+import type { ChatResponse, FeedbackRating, MessageFeedback, Session, SpeciesCard, UiMessage, WildlifeIdentification } from "../types";
 
 const NEW_SESSION_ID = "new";
 
 function uid(): string {
   return crypto.randomUUID();
+}
+
+// AI-authored replies are only scoreable when the backend actually traced the
+// turn (Langfuse enabled) — everything downstream (FeedbackButtons) treats a
+// missing traceId as "don't render feedback UI for this message" rather than
+// as an error, since tracing is an optional, degrade-silently feature here.
+function traceFields(response: Pick<ChatResponse, "trace_id">): { traceId?: string; feedback?: MessageFeedback } {
+  if (!response.trace_id) return {};
+  return { traceId: response.trace_id, feedback: { rating: null, comment: "" } };
 }
 
 function emptySession(): Session {
@@ -50,6 +59,43 @@ export function useSessions() {
       }));
     },
     [updateSession],
+  );
+
+  // Optimistically records the visitor's rating/note, then fires the request.
+  // Best-effort: on failure, revert to whatever was last confirmed (not just
+  // cleared) rather than surface an error bubble — feedback is never
+  // mandatory and must not disrupt the chat.
+  const submitFeedback = useCallback(
+    async (sessionId: string, messageId: string, traceId: string, rating: FeedbackRating, comment?: string) => {
+      const session = sessions.find((s) => s.id === sessionId);
+      if (!session) return;
+      const target = session.messages.find((m) => m.id === messageId);
+      const previous: MessageFeedback =
+        (target?.kind === "text" || target?.kind === "card") && target.feedback
+          ? target.feedback
+          : { rating: null, comment: "" };
+
+      updateSession(sessionId, (s) => ({
+        ...s,
+        messages: s.messages.map((m) =>
+          m.id === messageId && (m.kind === "text" || m.kind === "card")
+            ? { ...m, feedback: { rating, comment: comment ?? m.feedback?.comment ?? "" } }
+            : m,
+        ),
+      }));
+
+      try {
+        await postFeedback({ threadId: sessionId, traceId, sessionSecret: session.secret, rating, comment });
+      } catch {
+        updateSession(sessionId, (s) => ({
+          ...s,
+          messages: s.messages.map((m) =>
+            m.id === messageId && (m.kind === "text" || m.kind === "card") ? { ...m, feedback: previous } : m,
+          ),
+        }));
+      }
+    },
+    [sessions, updateSession],
   );
 
   const onNewSession = useCallback(() => {
@@ -101,7 +147,7 @@ export function useSessions() {
             title: card.common,
             subtitle: card.scientific || "Just now",
             species: card,
-            messages: [...s.messages, { id: uid(), kind: "card", role: "ai", card }],
+            messages: [...s.messages, { id: uid(), kind: "card", role: "ai", card, ...traceFields(response) }],
           }));
         } else {
           const isFallback = response.fallback_triggered;
@@ -116,7 +162,13 @@ export function useSessions() {
             subtitle: isFallback ? "Try another image" : "Something went wrong",
             messages: [
               ...s.messages,
-              { id: uid(), kind: "text", role: isFallback ? "ai" : "error", text },
+              {
+                id: uid(),
+                kind: "text",
+                role: isFallback ? "ai" : "error",
+                text,
+                ...(isFallback ? traceFields(response) : {}),
+              },
             ],
           }));
         }
@@ -155,7 +207,10 @@ export function useSessions() {
         const role: UiMessage["role"] = response.error_message ? "error" : "ai";
         updateSession(sid, (s) => ({
           ...s,
-          messages: [...s.messages, { id: uid(), kind: "text", role, text: replyText }],
+          messages: [
+            ...s.messages,
+            { id: uid(), kind: "text", role, text: replyText, ...(role === "ai" ? traceFields(response) : {}) },
+          ],
         }));
       } catch (err) {
         const msg = err instanceof ApiError ? err.message : "Something went wrong. Please try again.";
@@ -184,5 +239,6 @@ export function useSessions() {
     startIdentification,
     send,
     setMessageAudioUrl,
+    submitFeedback,
   };
 }
