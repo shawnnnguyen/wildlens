@@ -73,22 +73,30 @@ def init_langfuse() -> Optional["CallbackHandler"]:
         return None
 
 
-def invoke_with_tracing(graph, turn_input: dict, config: dict, langfuse_handler) -> dict:
+def invoke_with_tracing(
+    graph, turn_input: dict, config: dict, langfuse_handler
+) -> tuple[dict, Optional[str]]:
     """
     Run one graph turn, wrapped in a parent Langfuse span when tracing is
     enabled so per-turn outcome (species/confidence/threat/error) can be
     attached once the graph finishes — LangGraph's node-level LLM spans
     (produced via langfuse_handler in config["callbacks"]) nest underneath
     automatically. No-ops straight through to graph.invoke() otherwise.
+
+    Returns (result, trace_id) — trace_id is None when tracing is disabled,
+    or the Langfuse trace ID for this turn otherwise, so callers can later
+    attach human feedback (see backend/routers/feedback.py) to the exact
+    trace this response came from.
     """
     if langfuse_handler is None:
-        return graph.invoke(turn_input, config)
+        return graph.invoke(turn_input, config), None
 
     from langfuse import get_client
 
     client = get_client()
     with client.start_as_current_observation(name="chat_turn", as_type="span"):
         result = graph.invoke(turn_input, config)
+        trace_id = client.get_current_trace_id()
         # current_analysis reflects THIS turn's raw attempt (success, low-confidence,
         # or error) on a photo turn; it's reset to {} on text-only follow-up turns, so
         # fall back to identification_result (the last confidently-identified animal)
@@ -102,4 +110,4 @@ def invoke_with_tracing(graph, turn_input: dict, config: dict, langfuse_handler)
                 "threat_level": ident.get("threat_level"),
             },
         )
-        return result
+        return result, trace_id

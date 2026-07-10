@@ -85,7 +85,7 @@ def run_chat() -> None:
             user_message = text
 
         try:
-            result = invoke_with_tracing(
+            result, _trace_id = invoke_with_tracing(
                 app,
                 make_turn_input(
                     image_path=image_path,

@@ -1,7 +1,8 @@
 import { useEffect, useRef, type CSSProperties, type DragEvent, type KeyboardEvent } from "react";
 import { useSessions } from "../hooks/useSessions";
-import type { Session, SpeciesCard, UiMessage } from "../types";
+import type { FeedbackRating, MessageFeedback, Session, SpeciesCard, UiMessage } from "../types";
 import AudioPlayButton from "./AudioPlayButton";
+import FeedbackButtons from "./FeedbackButtons";
 
 const ACCENT = "#5a7250";
 
@@ -34,6 +35,7 @@ export default function AnimalIdChat() {
     startIdentification,
     send,
     setMessageAudioUrl,
+    submitFeedback,
   } = useSessions();
 
   const fileRef = useRef<HTMLInputElement>(null);
@@ -124,6 +126,9 @@ export default function AnimalIdChat() {
                     sessionSecret={active!.secret}
                     onSuggestionClick={send}
                     onAudioReady={(url) => setMessageAudioUrl(active!.id, m.id, url)}
+                    onFeedback={(rating, comment) =>
+                      submitFeedback(active!.id, m.id, ("traceId" in m ? m.traceId : undefined)!, rating, comment)
+                    }
                   />
                 ))}
                 {isThinking && <ThinkingDots />}
@@ -304,12 +309,14 @@ function MessageRow({
   sessionSecret,
   onSuggestionClick,
   onAudioReady,
+  onFeedback,
 }: {
   message: UiMessage;
   threadId: string;
   sessionSecret: string;
   onSuggestionClick: (text: string) => void;
   onAudioReady: (url: string) => void;
+  onFeedback: (rating: FeedbackRating, comment?: string) => void;
 }) {
   const isCard = message.kind === "card";
   const isUser = message.role === "human";
@@ -338,6 +345,8 @@ function MessageRow({
           sessionSecret={sessionSecret}
           onSuggestionClick={onSuggestionClick}
           onAudioReady={onAudioReady}
+          feedback={message.traceId ? message.feedback : undefined}
+          onFeedback={onFeedback}
         />
       </div>
     );
@@ -369,6 +378,9 @@ function MessageRow({
             onAudioReady={onAudioReady}
           />
         )}
+        {isAi && message.traceId && message.feedback && (
+          <FeedbackButtons feedback={message.feedback} onSubmit={onFeedback} />
+        )}
       </div>
     </div>
   );
@@ -381,6 +393,8 @@ function SpeciesCardView({
   sessionSecret,
   onSuggestionClick,
   onAudioReady,
+  feedback,
+  onFeedback,
 }: {
   card: SpeciesCard;
   audioUrl?: string;
@@ -388,6 +402,8 @@ function SpeciesCardView({
   sessionSecret: string;
   onSuggestionClick: (text: string) => void;
   onAudioReady: (url: string) => void;
+  feedback?: MessageFeedback;
+  onFeedback: (rating: FeedbackRating, comment?: string) => void;
 }) {
   const details = [
     { label: "Habitat", value: card.habitatContext },
@@ -424,6 +440,8 @@ function SpeciesCardView({
           onAudioReady={onAudioReady}
         />
       )}
+
+      {feedback && <FeedbackButtons feedback={feedback} onSubmit={onFeedback} />}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))", gap: 1, background: "#ececea", border: "1px solid #ececea", borderRadius: 12, overflow: "hidden", marginTop: 16 }}>
         {details.map((d) => (
