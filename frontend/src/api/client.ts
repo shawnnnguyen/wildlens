@@ -1,6 +1,10 @@
-import type { ChatResponse, ErrorResponse } from "../types";
+import type { AudioSynthesizeResponse, ChatResponse, ErrorResponse } from "../types";
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
+
+export function resolveAudioUrl(path: string): string {
+  return `${API_BASE_URL}${path}`;
+}
 
 export class ApiError extends Error {
   code: string;
@@ -54,6 +58,33 @@ export async function postChat({
     method: "POST",
     body: form,
     headers: sessionSecret ? { "X-Session-Secret": sessionSecret } : undefined,
+  });
+
+  if (!response.ok) {
+    await parseErrorResponse(response);
+  }
+  return response.json();
+}
+
+export interface PostSynthesizeAudioParams {
+  threadId: string;
+  text: string;
+  sessionSecret: string;
+}
+
+export async function postSynthesizeAudio({
+  threadId,
+  text,
+  sessionSecret,
+}: PostSynthesizeAudioParams): Promise<AudioSynthesizeResponse> {
+  const form = new FormData();
+  form.set("thread_id", threadId);
+  form.set("text", text);
+
+  const response = await fetch(`${API_BASE_URL}/api/audio/synthesize`, {
+    method: "POST",
+    body: form,
+    headers: { "X-Session-Secret": sessionSecret },
   });
 
   if (!response.ok) {

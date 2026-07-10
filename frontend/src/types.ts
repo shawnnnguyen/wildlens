@@ -47,6 +47,10 @@ export interface ErrorResponse {
   thread_id?: string | null;
 }
 
+export interface AudioSynthesizeResponse {
+  audio_url: string;
+}
+
 // ── Frontend-only UI state (not part of the backend contract) ────────────────
 
 // `identification.species` arrives as "Common name (Scientific name)" — split
@@ -63,8 +67,8 @@ export interface SpeciesCard {
 
 export type UiMessage =
   | { id: string; kind: "image"; role: "human"; imageUrl: string }
-  | { id: string; kind: "text"; role: "human" | "ai" | "error"; text: string }
-  | { id: string; kind: "card"; role: "ai"; card: SpeciesCard };
+  | { id: string; kind: "text"; role: "human" | "ai" | "error"; text: string; audioUrl?: string }
+  | { id: string; kind: "card"; role: "ai"; card: SpeciesCard; audioUrl?: string };
 
 export interface Session {
   id: string; // doubles as the backend thread_id, once identification has started
