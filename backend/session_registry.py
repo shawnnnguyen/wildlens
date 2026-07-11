@@ -11,8 +11,11 @@ import time
 class SessionRegistry:
     """
     Tracks active sessions and their capability-token secrets in a small
-    SQLite table (same file the LangGraph SqliteSaver checkpointer uses, by
-    convention — see backend/main.py).
+    SQLite table. Deliberately its own SQLite file, separate from the
+    LangGraph SqliteSaver checkpointer's file (see backend/main.py) — sharing
+    one file meant two independent sqlite3.Connection objects (each with its
+    own lock) writing to it with no coordination, which could race and raise
+    "database is locked" under concurrent traffic.
 
     The app is intentionally accountless and single-use (snap a photo, chat,
     leave), so there's no login/user model here. Instead, `thread_id` (a
@@ -32,12 +35,9 @@ class SessionRegistry:
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._lock = threading.Lock()
         with self._lock:
-            # WAL is a database-file-level setting (persists across connections,
-            # not per-connection) — set it here explicitly rather than relying on
-            # the LangGraph SqliteSaver on the same file (backend/main.py) having
-            # already enabled it first. Without WAL, two separate connections
-            # writing to the same file can hit "database is locked" under
-            # concurrent access.
+            # WAL only matters if this file is ever shared across processes
+            # (e.g. multiple uvicorn workers); within this process self._lock
+            # already fully serializes every read and write on this connection.
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute(
                 "CREATE TABLE IF NOT EXISTS sessions ("

@@ -60,6 +60,7 @@ DEEPSEEK_API_KEY=your_deepseek_api_key_here
 
 # ── Backend session persistence (optional, has a default) ──────────────────
 SESSIONS_DB_PATH=safari_sessions.db
+SESSION_REGISTRY_DB_PATH=safari_session_registry.db
 
 # ── Pinecone (vector store) ─────────────────────────────────────────────────
 PINECONE_API_KEY=your_pinecone_api_key_here

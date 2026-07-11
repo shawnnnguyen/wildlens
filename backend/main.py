@@ -107,6 +107,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     checkpointer = SqliteSaver(sqlite_conn)
     await asyncio.to_thread(checkpointer.setup)
 
+    # 4d. Session registry — deliberately a *separate* SQLite file from the
+    # checkpointer above. They used to share one file "by convention," but that
+    # meant two independent sqlite3.Connection objects (each with its own lock
+    # and 5s busy-timeout) writing to the same file with no coordination between
+    # them: a checkpoint write (happens on every graph node, every turn) racing
+    # a session create/evict write (happens on session bootstrap/teardown) could
+    # blow past the busy-timeout and raise "database is locked". Separate files
+    # means separate SQLite-level locks, so the two subsystems can never contend.
+    session_registry_db_path = os.getenv("SESSION_REGISTRY_DB_PATH", "safari_session_registry.db")
+
     # 5. Build compiled graph
     graph = await asyncio.to_thread(
         build_graph,
@@ -124,9 +134,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     app.state.rag_backend = rag_backend
     app.state.tts_backend = tts_backend
     app.state.langfuse_handler = langfuse_handler
-    # Same SQLite file as the checkpointer above — session secrets and graph
-    # state live side by side and share the same restart-survives guarantee.
-    app.state.session_registry = SessionRegistry(sessions_db_path)
+    # Separate SQLite file from the checkpointer above (see 4d) — same
+    # restart-survives guarantee, but no shared file lock to contend on.
+    app.state.session_registry = SessionRegistry(session_registry_db_path)
 
     # 9. Ensure audio serving directory exists
     ensure_audio_dir()

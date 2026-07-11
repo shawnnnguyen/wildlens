@@ -23,6 +23,8 @@ data/cache/
 backend/static/audio/
 safari_sessions.db
 safari_sessions.db-*
+safari_session_registry.db
+safari_session_registry.db-*
 
 # IDE
 .idea/
