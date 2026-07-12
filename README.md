@@ -59,6 +59,8 @@ GEMINI_VISION_MODEL=gemini-2.5-flash
 DEEPSEEK_API_KEY=your_deepseek_api_key_here
 
 # ── Backend session persistence (optional, has a default) ──────────────────
+# Separate SQLite files for the LangGraph checkpointer and the session-secret
+# registry — kept apart so writes to one never lock out the other.
 SESSIONS_DB_PATH=safari_sessions.db
 SESSION_REGISTRY_DB_PATH=safari_session_registry.db
 
