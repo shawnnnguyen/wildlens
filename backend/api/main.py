@@ -72,6 +72,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         # which risks truncating the structured-output JSON before it's emitted.
         thinking_budget=int(os.getenv("GEMINI_VISION_THINKING_BUDGET", "0")),
         max_output_tokens=int(os.getenv("GEMINI_VISION_MAX_TOKENS", "2048")),
+        timeout=int(os.getenv("GEMINI_REQUEST_TIMEOUT_SECONDS", "30")),
     )
     llm_text = ChatOpenAI(
         model="deepseek-chat",
@@ -79,6 +80,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         base_url="https://api.deepseek.com",
         temperature=0.35,
         max_tokens=int(os.getenv("DEEPSEEK_MAX_TOKENS", "2048")),
+        request_timeout=int(os.getenv("DEEPSEEK_REQUEST_TIMEOUT_SECONDS", "30")),
     )
 
     # 4. Init RAG (slow: loads HuggingFace model + Pinecone; run off the event loop)
