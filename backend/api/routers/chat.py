@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+from collections import defaultdict
 
 from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile
 
@@ -26,6 +27,13 @@ router = APIRouter(tags=["chat"])
 
 _ACCEPTED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/heic"})
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+
+# Serializes graph invocations per thread_id so two concurrent requests for the
+# same session can't both read the same checkpoint and each write a divergent
+# one, silently orphaning one turn's state. Safe to populate from concurrent
+# asyncio Tasks: defaultdict access itself is synchronous, so there's no await
+# point between the missing-key check and the lock's creation.
+_thread_locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 
 def _build_data_uri(content_type: str, data: bytes) -> str:
@@ -186,9 +194,10 @@ async def _handle_chat_turn(
     try:
         result: dict
         trace_id: str | None
-        result, trace_id = await asyncio.to_thread(
-            invoke_with_tracing, graph, turn_input, config, langfuse_handler
-        )
+        async with _thread_locks[thread_id]:
+            result, trace_id = await asyncio.to_thread(
+                invoke_with_tracing, graph, turn_input, config, langfuse_handler
+            )
     except Exception:
         log.exception("Graph invocation failed for thread_id=%s", thread_id)
         raise HTTPException(
