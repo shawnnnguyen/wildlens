@@ -16,7 +16,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage
 
 from wildlens.data.species_lookup import canonical_common_name, find_mentioned_species
-from wildlens.nodes._shared import _invoke_with_retry
+from wildlens.nodes._shared import _invoke_with_retry, wrap_untrusted
 from wildlens.nodes.check_relevance.prompts import (
     _OFF_TOPIC_EXEMPLARS,
     _ON_TOPIC_EXEMPLARS,
@@ -121,7 +121,7 @@ def _llm_classify_relevance(
             if session_species else ""
         )
         response = _invoke_with_retry(llm, [HumanMessage(
-            content=_RELEVANCE_PROMPT.format(context_line=context_line, message=message)
+            content=_RELEVANCE_PROMPT.format(context_line=context_line, message=wrap_untrusted(message))
         )])
         content = (response.content or "").strip()
         first_token = content.split()[0].upper() if content else ""

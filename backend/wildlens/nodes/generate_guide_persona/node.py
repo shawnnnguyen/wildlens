@@ -6,7 +6,7 @@ import logging
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
-from wildlens.nodes._shared import _invoke_with_retry, _strip_synthetic
+from wildlens.nodes._shared import _invoke_with_retry, _strip_synthetic, wrap_untrusted
 from wildlens.nodes.generate_guide_persona.prompts import (
     _KATE_SYSTEM,
     _PERSONA_FOLLOWUP_TASK_TEMPLATE,
@@ -83,7 +83,7 @@ def node_generate_guide_persona(
     # ── Build the task message for this specific turn ─────────────────────────
     if follow_up:
         task = HumanMessage(content=_PERSONA_FOLLOWUP_TASK_TEMPLATE.format(
-            follow_up=follow_up, facts=facts, animals_digest=animals_digest,
+            follow_up=wrap_untrusted(follow_up), facts=facts, animals_digest=animals_digest,
         ))
     else:
         trait_line  = ", ".join(traits) if traits else "its distinctive features"

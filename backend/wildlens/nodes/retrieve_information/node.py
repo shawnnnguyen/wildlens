@@ -8,6 +8,7 @@ import re
 from langchain_core.retrievers import BaseRetriever
 
 from wildlens.data.species_lookup import canonical_common_name
+from wildlens.nodes._shared import wrap_untrusted
 from wildlens.rag import _EnsembleRetriever
 from wildlens.state import WildlensState
 
@@ -119,7 +120,11 @@ def _format_fact(doc) -> str:
     """
     source = doc.metadata.get("source")
     if source in ("web", "web_enriched"):
+        # label (a page title or URL scraped by Tavily) is exactly as
+        # attacker-controlled as page_content — wrap both together rather
+        # than leaving label to be interpolated into trusted prompt territory.
         label = doc.metadata.get("title") or doc.metadata.get("url") or doc.metadata.get("species") or "cached web result"
-        return f"[Source: Web — {label}]\n{doc.page_content}"
+        labeled_content = f"{label}\n{doc.page_content}"
+        return f"[Source: Web]\n{wrap_untrusted(labeled_content)}"
     species = doc.metadata.get("species") or "Guidebook"
     return f"[Source: Guidebook — {species}]\n{doc.page_content}"

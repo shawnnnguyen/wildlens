@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, Uploa
 
 from wildlens.graphs import make_turn_input
 from wildlens.logging_config import current_thread_id
+from wildlens.nodes._shared import strip_untrusted_markers
 from wildlens.observability import invoke_with_tracing
 
 from ..audio_store import store_audio
@@ -44,7 +45,15 @@ def _build_data_uri(content_type: str, data: bytes) -> str:
 def _split_facts(raw: str) -> list[str]:
     if not raw:
         return []
-    return [f.strip() for f in raw.split("\n\n---\n\n") if f.strip()]
+    # Web-sourced facts carry wrap_untrusted()'s delimiter markers (LLM-facing
+    # injection defense, see retrieve_information/node.py) — strip them here
+    # so callers of this endpoint see the underlying source text, not the
+    # internal markers.
+    return [
+        strip_untrusted_markers(f).strip()
+        for f in raw.split("\n\n---\n\n")
+        if f.strip()
+    ]
 
 
 def _build_identification(
