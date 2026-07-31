@@ -5,8 +5,6 @@ test_audio_synthesize.py, scoped to the feedback router only.
 """
 from __future__ import annotations
 
-import sys
-from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -14,13 +12,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-_REPO_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT))                          # for `backend`
-sys.path.insert(0, str(_REPO_ROOT / "agent" / "src"))         # for `wildlens`
-
-from backend.dependencies import get_langfuse_handler, get_session_registry
-from backend.routers import feedback
-from backend.session_registry import SessionRegistry
+from backend.api.dependencies import get_langfuse_handler, get_session_registry
+from backend.api.routers import feedback
+from backend.api.session_registry import SessionRegistry
 
 
 @pytest.fixture

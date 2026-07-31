@@ -1,4 +1,58 @@
+# ── API layer (backend/api) ────────────────────────────────────────────────────
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 python-multipart>=0.0.9
+
+# ── Orchestration ──────────────────────────────────────────────────────────────
+langgraph>=1.0.0
+langgraph-checkpoint-sqlite>=3.0.0   # SqliteSaver — checkpointer used by the backend in production
+
+# ── Retry/backoff ──────────────────────────────────────────────────────────────
+tenacity>=8.2.0
+
+# ── LangChain — 1.x era (langchain-core 1.x / langchain 1.x) ─────────────────
+langchain>=1.0.0
+langchain-core>=1.0.0
+langchain-openai>=1.0.0              # DeepSeek text LLM (OpenAI-compatible API)
+langchain-google-genai>=4.0.0        # Gemini for multimodal vision
+langchain-community>=0.4.0           # FAISS integration + BM25Retriever
+langchain-huggingface>=1.0.0         # HuggingFace embeddings
+
+# ── Vector store — Pinecone (cloud) ────────────────────────────────────────────
+langchain-pinecone>=0.2.0            # LangChain integration for Pinecone
+pinecone>=3.0.0                      # Pinecone Python client v3+
+
+# ── Web search — Tavily (live retrieval fallback/supplement) ──────────────────
+tavily-python>=0.5.0
+
+# ── Document + image store — Supabase ─────────────────────────────────────────
+supabase>=2.0.0                      # Supabase Python client
+
+# ── Observability ───────────────────────────────────────────────────────────────
+langfuse>=4.0.0                      # OTEL-based SDK: global Langfuse() client + CallbackHandler (optional).
+                                      # eval/run_eval.py's dataset.run_experiment()/client.run_experiment()
+                                      # usage was verified against the installed 4.12.0, but that API has
+                                      # been present since 4.0.0 (checked directly) — no floor bump needed.
+
+# ── BM25 keyword retriever ─────────────────────────────────────────────────────
+rank-bm25>=0.2.2                     # BM25 keyword retriever for hybrid search
+
+# ── Retrieval-result caching (opt-in — see _EnsembleRetriever.cache_dir) ───────
+diskcache>=5.6.0                     # on-disk cache, preferred over Redis at this scale
+
+# ── Embeddings ─────────────────────────────────────────────────────────────────
+sentence-transformers>=2.2.0
+
+# ── Structured output ──────────────────────────────────────────────────────────
+pydantic>=2.0.0
+
+# ── TTS (install at least one) ─────────────────────────────────────────────────
+edge-tts>=6.1.9                      # preferred: Microsoft Neural voices, free, high quality
+# gTTS>=2.3.2                        # fallback: Google TTS, simpler, requires internet
+
+# ── Data ingestion ─────────────────────────────────────────────────────────────
+httpx>=0.27.0                        # sync HTTP client for EOL + IUCN API calls
+ijson>=3.2.0                         # streaming JSON parser for LILA BC ~500 MB metadata
+
+# ── Environment management ─────────────────────────────────────────────────────
 python-dotenv>=1.0.0

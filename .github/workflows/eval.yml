@@ -23,10 +23,10 @@ jobs:
         with:
           python-version: "3.11"
       - run: |
-          pip install -r agent/requirements.txt
-          pip install -e agent
+          pip install -r backend/requirements.txt
+          pip install -e backend
       - name: Run eval
-        working-directory: agent
+        working-directory: backend
         env:
           LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}

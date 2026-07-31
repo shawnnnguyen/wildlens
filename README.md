@@ -13,7 +13,7 @@
 
 ## Prerequisites
 
-- **Python** 3.10+ (agent package), 3.11+ recommended
+- **Python** 3.10+, 3.11+ recommended
 - **Node.js** 18+ and npm (frontend)
 - **API keys** for Google AI Studio (Gemini) and DeepSeek at minimum — see [Configuration](#-configuration)
 - At least one TTS engine installed (`edge-tts` or `gTTS`, both installable via pip)
@@ -25,17 +25,12 @@
 git clone <repository-url>
 cd wildlens
 
-# --- Agent (LangGraph orchestration package) ---
-cd agent
+# --- Backend (FastAPI service + the wildlens LangGraph package) ---
+cd backend
 python -m venv .venv
 source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pip install -e .
-cd ..
-
-# --- Backend (FastAPI service, imports the agent package above) ---
-cd backend
-pip install -r requirements.txt
+pip install -e .               # installs the wildlens package (backend/wildlens/) editable
 cd ..
 
 # --- Frontend (React + Vite) ---
@@ -44,7 +39,7 @@ npm install
 cd ..
 ```
 
-> The backend imports the `wildlens` package directly, so install the agent package (`pip install -e .` above) into the same virtual environment the backend runs in.
+> `backend/api` (the FastAPI service) imports the `wildlens` package (`backend/wildlens/`) directly — `pip install -e .` above installs it editable into the same virtual environment the API runs in.
 
 ## Configuration
 
@@ -100,17 +95,16 @@ VITE_API_BASE_URL=http://localhost:8000
 ```bash
 # Start the backend API (FastAPI + Uvicorn)
 cd backend
-uvicorn main:app --reload
+uvicorn api.main:app --reload
 
 # In a separate terminal, start the frontend dev server
 cd frontend
 npm run dev
 
-# Run the agent as a standalone terminal chat (no backend/frontend needed)
-cd agent
+# Run wildlens as a standalone terminal chat (no API/frontend needed)
+cd backend
 python -m wildlens
 
 # Run tests
-cd agent && pytest
 cd backend && pytest
 ```

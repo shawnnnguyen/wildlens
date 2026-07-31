@@ -5,7 +5,6 @@ to the audio router only (no graph/RAG involved).
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from unittest.mock import patch
 
@@ -14,13 +13,9 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
-_REPO_ROOT = Path(__file__).parent.parent.parent
-sys.path.insert(0, str(_REPO_ROOT))                          # for `backend`
-sys.path.insert(0, str(_REPO_ROOT / "agent" / "src"))         # for `wildlens`
-
-from backend.dependencies import get_session_registry
-from backend.routers import audio
-from backend.session_registry import SessionRegistry
+from backend.api.dependencies import get_session_registry
+from backend.api.routers import audio
+from backend.api.session_registry import SessionRegistry
 
 
 @pytest.fixture
@@ -69,8 +64,8 @@ def test_synthesize_succeeds_and_stores_audio(client, tmp_path):
     fake_path = str(tmp_path / "fake.mp3")
     Path(fake_path).write_bytes(b"fake-mp3-bytes")
 
-    with patch("backend.routers.audio.synthesise_audio", return_value=fake_path) as mock_synth, \
-         patch("backend.routers.audio.store_audio", return_value="fake.mp3") as mock_store:
+    with patch("backend.api.routers.audio.synthesise_audio", return_value=fake_path) as mock_synth, \
+         patch("backend.api.routers.audio.store_audio", return_value="fake.mp3") as mock_store:
         resp = client.post(
             "/api/audio/synthesize",
             data={"thread_id": "sess_b", "text": "Hello there."},
@@ -110,7 +105,7 @@ def test_synthesize_rejects_text_over_length_cap(client):
 def test_synthesize_returns_503_when_tts_unavailable(client):
     secret = client.registry.create("sess_e")
 
-    with patch("backend.routers.audio.synthesise_audio", return_value="NO_TTS_ENGINE_INSTALLED"):
+    with patch("backend.api.routers.audio.synthesise_audio", return_value="NO_TTS_ENGINE_INSTALLED"):
         resp = client.post(
             "/api/audio/synthesize",
             data={"thread_id": "sess_e", "text": "Hello."},
@@ -125,8 +120,8 @@ def test_synthesize_returns_500_when_storage_fails(client, tmp_path):
     fake_path = str(tmp_path / "fake2.mp3")
     Path(fake_path).write_bytes(b"fake-mp3-bytes")
 
-    with patch("backend.routers.audio.synthesise_audio", return_value=fake_path), \
-         patch("backend.routers.audio.store_audio", side_effect=OSError("disk full")):
+    with patch("backend.api.routers.audio.synthesise_audio", return_value=fake_path), \
+         patch("backend.api.routers.audio.store_audio", side_effect=OSError("disk full")):
         resp = client.post(
             "/api/audio/synthesize",
             data={"thread_id": "sess_f", "text": "Hello."},

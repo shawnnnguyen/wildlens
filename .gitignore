@@ -12,15 +12,15 @@ build/
 .venv/
 venv/
 
-# Generated at runtime (agent/)
-agent/faiss_wildlife_index/
-agent/audio_output/
+# Generated at runtime (backend/wildlens/)
+backend/wildlens/faiss_wildlife_index/
+backend/wildlens/audio_output/
 
 # Generated at runtime (data ingestion cache, repo root)
 data/cache/
 
-# Generated at runtime (backend/)
-backend/static/audio/
+# Generated at runtime (backend/api/)
+backend/api/static/audio/
 safari_sessions.db
 safari_sessions.db-*
 safari_session_registry.db
