@@ -178,7 +178,7 @@ def node_analyze_image(
         if ident["confidence_score"] >= MIN_CONFIDENCE:
             out["identification_result"] = ident
             out["chat_history"] = [
-                HumanMessage(content=f"[Photo submitted: {state['image_path']}]"),
+                HumanMessage(content="[Photo submitted]"),
                 AIMessage(
                     content=(
                         f"Identified **{result.species}** — "

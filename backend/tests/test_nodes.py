@@ -106,6 +106,28 @@ def test_analyze_image_escalates_threat_level_from_curated_data():
     assert result["identification_history"][0]["threat_level"] == "high"
 
 
+def test_analyze_image_confident_photo_marker_omits_raw_image_path():
+    """A confident identification's chat_history marker must not embed
+    state['image_path'] — that's the full base64 data URI on the production
+    path, and this marker persists in the SQLite checkpointer and is returned
+    verbatim by GET /sessions/{id}/history."""
+    ident = WildlifeIdentification(
+        species="African Lion (Panthera leo)",
+        confidence_score=0.9,
+        visual_traits=["mane"],
+        threat_level="high",
+        habitat_context="savanna",
+    )
+    llm = _mock_llm_returning(ident)
+    huge_data_uri = "data:image/jpeg;base64," + ("a" * 5000)
+    state = _base_state(image_path=huge_data_uri)
+    with patch("wildlens.nodes.analyze_image.node._to_data_uri", return_value=huge_data_uri):
+        result = node_analyze_image(state, llm)
+    marker = result["chat_history"][0]
+    assert marker.content == "[Photo submitted]"
+    assert huge_data_uri not in marker.content
+
+
 def test_analyze_image_does_not_downgrade_high_call():
     """Gemini says 'high' for a curated-'medium' species — must NOT be downgraded."""
     ident = WildlifeIdentification(
