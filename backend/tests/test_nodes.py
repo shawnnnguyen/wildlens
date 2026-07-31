@@ -12,7 +12,7 @@ import pytest
 
 from langchain_core.messages import AIMessage, HumanMessage
 
-from wildlens.state import MIN_CONFIDENCE, WildlensState, WildlifeIdentification
+from wildlens.state import MAX_IMAGE_BYTES, MIN_CONFIDENCE, WildlensState, WildlifeIdentification
 from wildlens.nodes._shared import _is_synthetic_marker, _strip_synthetic, wrap_untrusted
 from wildlens.nodes.analyze_image.node import node_analyze_image, parse_binomial, _to_data_uri
 from wildlens.nodes.check_relevance.node import (
@@ -639,7 +639,7 @@ def test_to_data_uri_rejects_missing_file(tmp_path):
 
 def test_to_data_uri_rejects_oversized_file(tmp_path):
     big = tmp_path / "big.jpg"
-    big.write_bytes(b"0" * (10 * 1024 * 1024 + 1))
+    big.write_bytes(b"0" * (MAX_IMAGE_BYTES + 1))
     with pytest.raises(ValueError):
         _to_data_uri(str(big))
 

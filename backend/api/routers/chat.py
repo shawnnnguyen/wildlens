@@ -11,6 +11,7 @@ from wildlens.graphs import make_turn_input
 from wildlens.logging_config import current_thread_id
 from wildlens.nodes._shared import strip_untrusted_markers
 from wildlens.observability import invoke_with_tracing
+from wildlens.state import MAX_IMAGE_BYTES
 
 from ..audio_store import store_audio
 from ..dependencies import get_graph, get_langfuse_handler, get_session_registry
@@ -28,7 +29,6 @@ log = logging.getLogger("backend.routers.chat")
 router = APIRouter(tags=["chat"])
 
 _ACCEPTED_MIME_TYPES = frozenset({"image/jpeg", "image/png", "image/webp", "image/heic"})
-_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
 
 # Serializes graph invocations per thread_id so two concurrent requests for the
 # same session can't both read the same checkpoint and each write a divergent
@@ -172,13 +172,13 @@ async def _handle_chat_turn(
 
         data = await image.read()
 
-        if len(data) > _MAX_IMAGE_BYTES:
+        if len(data) > MAX_IMAGE_BYTES:
             raise HTTPException(
                 status_code=413,
                 detail=ErrorResponse(
                     error=ErrorDetail(
                         code="IMAGE_TOO_LARGE",
-                        message="Image must be ≤ 10 MB.",
+                        message=f"Image must be ≤ {MAX_IMAGE_BYTES // (1024 * 1024)} MB.",
                         field="image",
                     ),
                     thread_id=thread_id,

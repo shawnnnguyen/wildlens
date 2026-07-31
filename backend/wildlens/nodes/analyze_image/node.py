@@ -15,7 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from wildlens.data.species_lookup import ground_truth_threat_level
 from wildlens.nodes._shared import _RETRY_POLICY, _is_truncated
-from wildlens.state import MIN_CONFIDENCE, WildlensState, WildlifeIdentification
+from wildlens.state import MAX_IMAGE_BYTES, MIN_CONFIDENCE, WildlensState, WildlifeIdentification
 
 log = logging.getLogger("safari_guide.nodes")
 
@@ -24,7 +24,6 @@ log = logging.getLogger("safari_guide.nodes")
 _THREAT_RANK = {"low": 0, "medium": 1, "high": 2}
 
 _ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
-_MAX_IMAGE_BYTES = 10 * 1024 * 1024  # keep in sync with backend/api/routers/chat.py's cap
 
 
 @_RETRY_POLICY
@@ -61,8 +60,8 @@ def _to_data_uri(image_path: str) -> str:
     if not path.is_file():
         raise FileNotFoundError(f"Image not found: {path}")
     size = path.stat().st_size
-    if size > _MAX_IMAGE_BYTES:
-        raise ValueError(f"Image too large: {size} bytes (max {_MAX_IMAGE_BYTES})")
+    if size > MAX_IMAGE_BYTES:
+        raise ValueError(f"Image too large: {size} bytes (max {MAX_IMAGE_BYTES})")
     mime_map = {
         ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
         ".png": "image/png",  ".webp": "image/webp",

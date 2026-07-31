@@ -14,6 +14,9 @@ from pydantic import BaseModel, Field
 MIN_CONFIDENCE: float = float(os.getenv("MIN_CONFIDENCE", "0.60"))
 SUMMARY_THRESHOLD: int = 10  # summarise chat_history when it exceeds this many messages
 MAX_IDENTIFICATION_HISTORY: int = 15  # keep only the most recent N identified animals per session
+MAX_IMAGE_BYTES: int = 10 * 1024 * 1024  # shared cap: chat.py's upload validation
+                                          # AND analyze_image's _to_data_uri file-path
+                                          # branch (the __main__.py CLI entry point).
 
 
 def _bounded_identification_history(existing: list[dict], new: list[dict]) -> list[dict]:
