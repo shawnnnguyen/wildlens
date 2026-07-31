@@ -57,9 +57,35 @@ def _base_state(**overrides) -> WildlensState:
 def _mock_llm_returning(identification: WildlifeIdentification) -> MagicMock:
     llm = MagicMock()
     structured = MagicMock()
-    structured.invoke.return_value = identification
+    structured.invoke.return_value = {
+        "raw": AIMessage(content="", response_metadata={"finish_reason": "STOP"}),
+        "parsed": identification,
+        "parsing_error": None,
+    }
     llm.with_structured_output.return_value = structured
     return llm
+
+
+def _mock_llm_truncated() -> MagicMock:
+    llm = MagicMock()
+    structured = MagicMock()
+    structured.invoke.return_value = {
+        "raw": AIMessage(content="", response_metadata={"finish_reason": "MAX_TOKENS"}),
+        "parsed": None,
+        "parsing_error": None,
+    }
+    llm.with_structured_output.return_value = structured
+    return llm
+
+
+def test_analyze_image_reports_truncated_response_as_error():
+    """A response cut off by the token limit must surface as a distinct,
+    recognizable error rather than crashing on `None.model_dump()` or
+    raising a generic/confusing parsing exception."""
+    state = _base_state(image_path="data:image/jpeg;base64,abc123")
+    result = node_analyze_image(state, _mock_llm_truncated())
+    assert result["error_message"] == "truncated_response"
+    assert result["current_analysis"] == {"confidence_score": 0.0, "species": "unknown"}
 
 
 def test_analyze_image_escalates_threat_level_from_curated_data():

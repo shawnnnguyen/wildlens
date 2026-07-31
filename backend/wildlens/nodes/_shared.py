@@ -9,12 +9,18 @@ from langchain_core.runnables import Runnable
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8), reraise=True)
+# Exposed (not just applied inline) so analyze_image can wrap its own
+# invoke-plus-parsing-error-check callable in the exact same policy — see
+# _invoke_structured_with_retry below, which needs retry to cover a bad-JSON
+# parse failure, not just the llm.invoke() call itself.
+_RETRY_POLICY = retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=8), reraise=True)
+
+
+@_RETRY_POLICY
 def _invoke_with_retry(llm: Runnable, messages: list):
     """
     Shared retry policy for every plain .invoke() call against Gemini across
-    nodes: analyze_image's structured.invoke() (a Runnable, same interface),
-    check_relevance's _llm_classify_relevance's llm.invoke(),
+    nodes: check_relevance's _llm_classify_relevance's llm.invoke(),
     summarize_history's llm.invoke(), and generate_guide_persona's
     llm.invoke(). A transient API blip (timeout, rate limit) gets retried
     here instead of immediately tripping the caller's try/except and failing
@@ -42,6 +48,23 @@ def _is_synthetic_marker(msg) -> bool:
 
 def _strip_synthetic(messages: list) -> list:
     return [m for m in messages if not _is_synthetic_marker(m)]
+
+
+# Gemini reports its own enum name ("MAX_TOKENS") on truncation; DeepSeek/other
+# OpenAI-compatible backends report OpenAI's lowercase string ("length") —
+# compared case-insensitively so either shows up.
+_TRUNCATION_FINISH_REASONS = {"length", "max_tokens"}
+
+
+def _is_truncated(message) -> bool:
+    """
+    True if *message* (an AIMessage) was cut off by the model's token limit
+    rather than reaching a natural stop. A truncated structured-output call
+    produces incomplete JSON that otherwise fails validation with a generic,
+    confusing parsing error — see node_analyze_image.
+    """
+    metadata = getattr(message, "response_metadata", None) or {}
+    return str(metadata.get("finish_reason", "")).lower() in _TRUNCATION_FINISH_REASONS
 
 
 # ── Prompt-injection guardrails ─────────────────────────────────────────────

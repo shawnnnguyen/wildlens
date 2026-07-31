@@ -229,6 +229,18 @@ async def _handle_chat_turn(
     raw_error = result.get("error_message", "") or ""
     identification_result = result.get("identification_result") or {}
 
+    if raw_error == "truncated_response":
+        raise HTTPException(
+            status_code=502,
+            detail=ErrorResponse(
+                error=ErrorDetail(
+                    code="TRUNCATED_RESPONSE",
+                    message="The identification model's response was cut off by its token limit before it could be parsed. Please try again.",
+                ),
+                thread_id=thread_id,
+            ).model_dump(),
+        )
+
     # node_unclear_photo_fallback and node_topic_redirect_fallback set these exact
     # sentinels for a valid, complete final_script with no backing identification/RAG
     # facts — not a real fault; other error_message values are real faults.

@@ -33,6 +33,12 @@ def node_unclear_photo_fallback(state: WildlensState) -> dict:
     )
     return {
         "final_script":  message,
-        "error_message": "low_confidence",
+        # node_analyze_image sets error_message="truncated_response" (not a
+        # confidence issue at all — confidence_score=0.0 is just the stub
+        # value, which routes here) and chat.py needs that exact sentinel to
+        # surface a 502 instead of a silent low-confidence fallback. Only
+        # default to "low_confidence" when analyze_image didn't already set
+        # a more specific error.
+        "error_message": state.get("error_message") or "low_confidence",
         "chat_history":  [AIMessage(content=message)],
     }

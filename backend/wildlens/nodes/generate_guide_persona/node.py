@@ -6,7 +6,7 @@ import logging
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
-from wildlens.nodes._shared import _invoke_with_retry, _strip_synthetic, wrap_untrusted
+from wildlens.nodes._shared import _invoke_with_retry, _is_truncated, _strip_synthetic, wrap_untrusted
 from wildlens.nodes.generate_guide_persona.prompts import (
     _KATE_SYSTEM,
     _PERSONA_FOLLOWUP_TASK_TEMPLATE,
@@ -114,6 +114,15 @@ def node_generate_guide_persona(
         }
 
     script = response.content
+    if _is_truncated(response):
+        # Unlike analyze_image's structured JSON, a truncated script is still
+        # partially usable text — degrading to the generic apology would throw
+        # away a mostly-good response, so this only logs for visibility rather
+        # than replacing final_script or setting error_message.
+        log.warning(
+            "   → generate_guide_persona response truncated by token limit (finish_reason=%s)",
+            response.response_metadata.get("finish_reason"),
+        )
     log.info("   → Script generated (%d words)", len(script.split()))
 
     return {

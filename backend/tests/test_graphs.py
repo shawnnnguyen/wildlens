@@ -11,9 +11,19 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
+from langchain_core.messages import AIMessage
+
 from wildlens.graphs import build_graph, make_turn_input
 from wildlens.rag import _EnsembleRetriever
 from wildlens.state import WildlifeIdentification
+
+
+def _raw_result(parsed) -> dict:
+    return {
+        "raw": AIMessage(content="", response_metadata={"finish_reason": "STOP"}),
+        "parsed": parsed,
+        "parsing_error": None,
+    }
 
 
 def _build_test_graph():
@@ -28,12 +38,12 @@ def test_low_confidence_photo_never_calls_persona_llm():
     graph, llm_vision, llm_text = _build_test_graph()
 
     structured = MagicMock()
-    structured.invoke.return_value = MagicMock(
+    structured.invoke.return_value = _raw_result(MagicMock(
         model_dump=lambda: {
             "species": "unknown", "confidence_score": 0.2,
             "visual_traits": [], "threat_level": "low", "habitat_context": "",
         }
-    )
+    ))
     llm_vision.with_structured_output.return_value = structured
 
     with patch("wildlens.nodes.analyze_image.node._to_data_uri", return_value="data:image/jpeg;base64,xx"):
@@ -46,14 +56,41 @@ def test_low_confidence_photo_never_calls_persona_llm():
     llm_text.invoke.assert_not_called()
 
 
+def test_truncated_vision_response_error_survives_unclear_photo_fallback():
+    """A response truncated by the token limit routes through
+    unclear_photo_fallback (confidence_score=0.0 < MIN_CONFIDENCE, same as a
+    genuinely blurry photo) — that node must not clobber the more specific
+    "truncated_response" sentinel with its own "low_confidence" default,
+    since chat.py needs the exact sentinel to return a 502 instead of a
+    silent, misleading low-confidence reply."""
+    graph, llm_vision, llm_text = _build_test_graph()
+
+    structured = MagicMock()
+    structured.invoke.return_value = {
+        "raw": AIMessage(content="", response_metadata={"finish_reason": "MAX_TOKENS"}),
+        "parsed": None,
+        "parsing_error": None,
+    }
+    llm_vision.with_structured_output.return_value = structured
+
+    with patch("wildlens.nodes.analyze_image.node._to_data_uri", return_value="data:image/jpeg;base64,xx"):
+        result = graph.invoke(
+            make_turn_input(image_path="lion.jpg"),
+            config={"configurable": {"thread_id": "test-truncated"}},
+        )
+
+    assert result["error_message"] == "truncated_response"
+    llm_text.invoke.assert_not_called()
+
+
 def test_confident_photo_routes_through_persona_with_no_safety_alert():
     graph, llm_vision, llm_text = _build_test_graph()
 
     structured = MagicMock()
-    structured.invoke.return_value = WildlifeIdentification(
+    structured.invoke.return_value = _raw_result(WildlifeIdentification(
         species="African Lion (Panthera leo)", confidence_score=0.9,
         visual_traits=["mane"], threat_level="high", habitat_context="savanna",
-    )
+    ))
     llm_vision.with_structured_output.return_value = structured
     llm_text.invoke.return_value = MagicMock(content="Meet the African Lion, genus Panthera, species leo.")
 

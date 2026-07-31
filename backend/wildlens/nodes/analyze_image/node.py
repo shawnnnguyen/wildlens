@@ -14,7 +14,7 @@ from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 
 from wildlens.data.species_lookup import ground_truth_threat_level
-from wildlens.nodes._shared import _invoke_with_retry
+from wildlens.nodes._shared import _RETRY_POLICY, _is_truncated
 from wildlens.state import MIN_CONFIDENCE, WildlensState, WildlifeIdentification
 
 log = logging.getLogger("safari_guide.nodes")
@@ -25,6 +25,23 @@ _THREAT_RANK = {"low": 0, "medium": 1, "high": 2}
 
 _ALLOWED_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024  # keep in sync with backend/api/routers/chat.py's cap
+
+
+@_RETRY_POLICY
+def _invoke_structured_with_retry(structured, prompt: HumanMessage) -> dict:
+    """
+    Same retry policy as _shared._invoke_with_retry, but wrapping the
+    include_raw=True call directly so a malformed/invalid structured response
+    (raw_result["parsing_error"] set) gets retried too, not just a network-
+    level exception from .invoke() itself. Truncation is NOT retried here —
+    it's returned as-is for the caller to detect via _is_truncated, since
+    retrying an already-truncated response at the same max_output_tokens is
+    unlikely to help and would just add latency for a near-certain repeat.
+    """
+    raw_result: dict = structured.invoke([prompt])
+    if raw_result["parsing_error"] is not None and not _is_truncated(raw_result["raw"]):
+        raise raw_result["parsing_error"]
+    return raw_result
 
 
 def _to_data_uri(image_path: str) -> str:
@@ -105,7 +122,7 @@ def node_analyze_image(
     """
     log.info("▶ NODE  analyze_image")
     try:
-        structured = llm.with_structured_output(WildlifeIdentification)
+        structured = llm.with_structured_output(WildlifeIdentification, include_raw=True)
         data_uri = _to_data_uri(state["image_path"])
 
         prompt = HumanMessage(content=[
@@ -121,7 +138,23 @@ def node_analyze_image(
             {"type": "image_url", "image_url": {"url": data_uri}},
         ])
 
-        result: WildlifeIdentification = _invoke_with_retry(structured, [prompt])
+        raw_result: dict = _invoke_structured_with_retry(structured, prompt)
+        raw_message = raw_result["raw"]
+
+        if _is_truncated(raw_message):
+            log.error(
+                "   → analyze_image response truncated by token limit (finish_reason=%s)",
+                raw_message.response_metadata.get("finish_reason"),
+            )
+            return {
+                "current_analysis": {"confidence_score": 0.0, "species": "unknown"},
+                "error_message":    "truncated_response",
+            }
+
+        if raw_result["parsing_error"] is not None:
+            raise raw_result["parsing_error"]
+
+        result: WildlifeIdentification = raw_result["parsed"]
         log.info(
             "   → %s | conf=%.0f%% | threat=%s",
             result.species, result.confidence_score * 100, result.threat_level,
