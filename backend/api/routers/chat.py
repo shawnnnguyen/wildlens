@@ -13,6 +13,7 @@ from wildlens.observability import invoke_with_tracing
 
 from ..audio_store import store_audio
 from ..dependencies import get_graph, get_langfuse_handler, get_session_registry
+from ..rate_limit import rate_limit_dependency
 from ..schemas import (
     ChatResponse,
     ErrorDetail,
@@ -67,7 +68,11 @@ def _build_identification(
         return None
 
 
-@router.post("/chat", response_model=ChatResponse)
+@router.post(
+    "/chat",
+    response_model=ChatResponse,
+    dependencies=[Depends(rate_limit_dependency("chat_rate_limiter"))],
+)
 async def chat(
     thread_id: str = Form(...),
     message: str | None = Form(None),

@@ -10,6 +10,7 @@ from wildlens.tts import synthesise_audio
 
 from ..audio_store import AUDIO_DIR, resolve_audio_path, store_audio
 from ..dependencies import get_session_registry
+from ..rate_limit import rate_limit_dependency
 from ..schemas import AudioSynthesizeResponse, ErrorDetail, ErrorResponse
 from ..session_registry import SessionRegistry
 
@@ -79,7 +80,11 @@ async def get_audio(filename: str) -> FileResponse:
     )
 
 
-@router.post("/audio/synthesize", response_model=AudioSynthesizeResponse)
+@router.post(
+    "/audio/synthesize",
+    response_model=AudioSynthesizeResponse,
+    dependencies=[Depends(rate_limit_dependency("audio_rate_limiter"))],
+)
 async def synthesize_audio(
     thread_id: str = Form(...),
     text: str = Form(...),

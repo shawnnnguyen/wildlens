@@ -20,6 +20,7 @@ from wildlens.rag import _NullRetriever, init_rag
 from wildlens.tts import _EDGE_TTS_AVAILABLE, _GTTS_AVAILABLE
 
 from .audio_store import audio_janitor, ensure_audio_dir
+from .rate_limit import RateLimiter
 from .routers import audio, chat, feedback, health, sessions
 from .schemas import ErrorDetail, ErrorResponse
 from .session_registry import SessionRegistry
@@ -139,6 +140,15 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     # Separate SQLite file from the checkpointer above (see 4d) — same
     # restart-survives guarantee, but no shared file lock to contend on.
     app.state.session_registry = SessionRegistry(session_registry_db_path)
+
+    app.state.chat_rate_limiter = RateLimiter(
+        max_requests=int(os.getenv("CHAT_RATE_LIMIT_PER_MINUTE", "20")),
+        window_seconds=60,
+    )
+    app.state.audio_rate_limiter = RateLimiter(
+        max_requests=int(os.getenv("AUDIO_RATE_LIMIT_PER_MINUTE", "30")),
+        window_seconds=60,
+    )
 
     # 9. Ensure audio serving directory exists
     ensure_audio_dir()
